@@ -1282,3 +1282,4 @@ Use the issue files in `issues/` as implementation tickets:
 - `016-STORY-doctors-office-specialized-agent.md`
 - `017-TASK-approval-sessions-templates-preferences.md`
 - `018-STORY-admin-portal-customer-management.md`
+- `019-TASK-database-migrations-and-github-pipelines.md`

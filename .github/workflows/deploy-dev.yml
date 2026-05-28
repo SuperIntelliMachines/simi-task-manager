@@ -1,0 +1,345 @@
+name: Deploy to Cloud Run Development
+
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Which services to deploy"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - backend
+          - frontend
+      run_migrations:
+        description: "Run database migrations before deploy"
+        required: false
+        default: true
+        type: boolean
+      skip_tests:
+        description: "Skip tests for emergency deploys"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+env:
+  GCP_PROJECT_ID: super-intelli-machines
+  GCP_REGION: asia-south1
+  GAR_REGISTRY: asia-south1-docker.pkg.dev/super-intelli-machines/simi-task-manager
+  CLOUD_SQL_INSTANCE: sim-db-instance
+  DATABASE_NAME: simi_task_manager
+  DATABASE_USER: postgres
+  BACKEND_SERVICE: simi-task-manager-backend-dev
+  FRONTEND_SERVICE: simi-task-manager-frontend-dev
+  ENVIRONMENT: development
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_tests != 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        if: hashFiles('backend/requirements.txt') != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Run backend tests
+        if: hashFiles('backend/requirements.txt') != ''
+        working-directory: backend
+        env:
+          ENVIRONMENT: test
+          DATABASE_URL_OVERRIDE: sqlite+aiosqlite:///./test.db
+          JWT_SECRET_KEY: test-secret-key-for-ci
+        run: |
+          pip install -r requirements.txt
+          python -m pytest tests/ -v --tb=short
+
+      - name: Setup Node.js
+        if: hashFiles('frontend/package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Run frontend checks
+        if: hashFiles('frontend/package.json') != ''
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run typecheck
+          npm run test -- --run
+          npm run build
+
+      - name: No app code notice
+        if: hashFiles('backend/requirements.txt') == '' && hashFiles('frontend/package.json') == ''
+        run: echo "No backend/frontend app code found yet. Skipping tests."
+
+  migrate:
+    name: Run Migrations
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: |
+      always() &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      github.event.inputs.run_migrations == 'true'
+    environment: development
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Start Cloud SQL Auth Proxy
+        run: |
+          curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.4/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy ${{ env.GCP_PROJECT_ID }}:${{ env.GCP_REGION }}:${{ env.CLOUD_SQL_INSTANCE }} --port 5432 &
+          sleep 5
+
+      - name: Create migration tracking table
+        env:
+          PGPASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+        run: |
+          psql -h 127.0.0.1 -p 5432 -U ${{ env.DATABASE_USER }} -d ${{ env.DATABASE_NAME }} <<EOF
+          CREATE TABLE IF NOT EXISTS schema_migrations (
+            id SERIAL PRIMARY KEY,
+            migration_name VARCHAR(255) NOT NULL UNIQUE,
+            applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            applied_by VARCHAR(100),
+            checksum VARCHAR(64),
+            execution_time_ms INTEGER
+          );
+          EOF
+
+      - name: Apply pending migrations
+        env:
+          PGPASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+        run: |
+          shopt -s nullglob
+          for file in database/migrations/*.sql; do
+            filename=$(basename "$file")
+            applied=$(psql -h 127.0.0.1 -p 5432 -U ${{ env.DATABASE_USER }} -d ${{ env.DATABASE_NAME }} -t -c \
+              "SELECT COUNT(*) FROM schema_migrations WHERE migration_name = '$filename';")
+            if [ "$(echo "$applied" | xargs)" -gt 0 ]; then
+              echo "SKIP: $filename already applied"
+              continue
+            fi
+            checksum=$(sha256sum "$file" | cut -d' ' -f1)
+            start_time=$(date +%s%3N)
+            psql -h 127.0.0.1 -p 5432 -U ${{ env.DATABASE_USER }} -d ${{ env.DATABASE_NAME }} --set ON_ERROR_STOP=1 -f "$file"
+            end_time=$(date +%s%3N)
+            execution_time=$((end_time - start_time))
+            psql -h 127.0.0.1 -p 5432 -U ${{ env.DATABASE_USER }} -d ${{ env.DATABASE_NAME }} -c \
+              "INSERT INTO schema_migrations (migration_name, applied_by, checksum, execution_time_ms)
+               VALUES ('$filename', 'github-actions-dev', '$checksum', $execution_time)
+               ON CONFLICT (migration_name) DO NOTHING;"
+          done
+
+  build-backend:
+    name: Build Backend Image
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: |
+      always() &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (github.event.inputs.services == 'all' || github.event.inputs.services == 'backend')
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify backend Dockerfile exists
+        run: test -f backend/Dockerfile
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          short_sha=$(echo "${{ github.sha }}" | cut -c1-7)
+          image="${{ env.GAR_REGISTRY }}/${{ env.BACKEND_SERVICE }}:${short_sha}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        run: |
+          docker build \
+            --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg ENVIRONMENT=development \
+            -t ${{ steps.meta.outputs.image }} \
+            -t ${{ env.GAR_REGISTRY }}/${{ env.BACKEND_SERVICE }}:dev \
+            ./backend
+          docker push ${{ steps.meta.outputs.image }}
+          docker push ${{ env.GAR_REGISTRY }}/${{ env.BACKEND_SERVICE }}:dev
+
+  build-frontend:
+    name: Build Frontend Image
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: |
+      always() &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (github.event.inputs.services == 'all' || github.event.inputs.services == 'frontend')
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify frontend Dockerfile exists
+        run: test -f frontend/Dockerfile
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          short_sha=$(echo "${{ github.sha }}" | cut -c1-7)
+          image="${{ env.GAR_REGISTRY }}/${{ env.FRONTEND_SERVICE }}:${short_sha}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push frontend image
+        run: |
+          docker build \
+            --build-arg VITE_API_URL=/api/v1 \
+            --build-arg VITE_ENVIRONMENT=development \
+            -t ${{ steps.meta.outputs.image }} \
+            -t ${{ env.GAR_REGISTRY }}/${{ env.FRONTEND_SERVICE }}:dev \
+            ./frontend
+          docker push ${{ steps.meta.outputs.image }}
+          docker push ${{ env.GAR_REGISTRY }}/${{ env.FRONTEND_SERVICE }}:dev
+
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    needs: [migrate, build-backend]
+    if: |
+      always() &&
+      needs.build-backend.result == 'success' &&
+      (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
+    environment:
+      name: development
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Deploy backend to Cloud Run
+        id: deploy
+        run: |
+          gcloud run deploy ${{ env.BACKEND_SERVICE }} \
+            --image ${{ needs.build-backend.outputs.image }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --port 8000 \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --timeout 300 \
+            --concurrency 80 \
+            --cpu-boost \
+            --allow-unauthenticated \
+            --set-cloudsql-instances ${{ secrets.INSTANCE_CONNECTION_NAME }} \
+            --set-env-vars "DB_USER=${{ env.DATABASE_USER }},DB_PASSWORD=${{ secrets.DATABASE_PASSWORD }},DB_NAME=${{ env.DATABASE_NAME }},INSTANCE_CONNECTION_NAME=${{ secrets.INSTANCE_CONNECTION_NAME }},IS_CLOUD_RUN=true,ENVIRONMENT=development,DEBUG=true,JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }},OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }},ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }},TELEGRAM_WEBHOOK_SECRET=${{ secrets.TELEGRAM_WEBHOOK_SECRET }},TELEGRAM_WEBHOOK_URL=${{ secrets.TELEGRAM_WEBHOOK_URL }},WHATSAPP_PHONE_NUMBER_ID=${{ secrets.WHATSAPP_PHONE_NUMBER_ID }},WHATSAPP_ACCESS_TOKEN=${{ secrets.WHATSAPP_ACCESS_TOKEN }},WHATSAPP_VERIFY_TOKEN=${{ secrets.WHATSAPP_VERIFY_TOKEN }},WHATSAPP_APP_SECRET=${{ secrets.WHATSAPP_APP_SECRET }},REDIS_URL=${{ secrets.REDIS_URL }},LOG_LEVEL=debug,LOG_FORMAT=json,LOG_SERVICE_NAME=simi-task-manager-backend-dev,GCP_PROJECT_ID=${{ env.GCP_PROJECT_ID }}" \
+            --labels "environment=development,app=simi-task-manager" \
+            --quiet
+          url=$(gcloud run services describe ${{ env.BACKEND_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)')
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Health check
+        run: |
+          url="${{ steps.deploy.outputs.url }}"
+          for i in {1..10}; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" "${url}/healthz" || true)
+            if [ "$status" = "200" ]; then
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [build-frontend, deploy-backend]
+    if: |
+      always() &&
+      needs.build-frontend.result == 'success' &&
+      (needs.deploy-backend.result == 'success' || needs.deploy-backend.result == 'skipped')
+    environment:
+      name: development
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Deploy frontend to Cloud Run
+        id: deploy
+        run: |
+          backend_url=$(gcloud run services describe ${{ env.BACKEND_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)' 2>/dev/null || echo "")
+          gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
+            --image ${{ needs.build-frontend.outputs.image }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --port 80 \
+            --memory 256Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --timeout 60 \
+            --concurrency 200 \
+            --allow-unauthenticated \
+            --set-env-vars "BACKEND_URL=${backend_url}" \
+            --labels "environment=development,app=simi-task-manager" \
+            --quiet
+          url=$(gcloud run services describe ${{ env.FRONTEND_SERVICE }} --region ${{ env.GCP_REGION }} --format 'value(status.url)')
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
