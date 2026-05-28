@@ -56,6 +56,7 @@ Start here:
 - [Specialized Agents Implementation Guide](docs/specialized-agents-implementation.md)
 - [Admin Portal Design](docs/admin-portal-design.md)
 - [Database Migrations and Deployment Pipelines](docs/database-migrations-and-deployment.md)
+- [External Task Lifecycle Management](docs/external-task-lifecycle-management.md)
 - [Original Insurance Reminder Bot Plan](Insurance-agent.md)
 
 ## Implementation Backlog
@@ -89,6 +90,7 @@ Hardening and specialized agents:
 - [ATM-017 Approval, Sessions, Templates, and Preferences](issues/017-TASK-approval-sessions-templates-preferences.md)
 - [ATM-018 Admin Portal for Customer Management](issues/018-STORY-admin-portal-customer-management.md)
 - [ATM-019 Database Migrations and GitHub Pipelines](issues/019-TASK-database-migrations-and-github-pipelines.md)
+- [ATM-020 External Task Lifecycle Management](issues/020-STORY-external-task-lifecycle-management.md)
 
 ## Insurance MVP Capabilities
 
@@ -116,6 +118,22 @@ The platform must enforce:
 - Approval for sensitive, bulk, or externally visible AI actions
 - Audit events for task, reminder, message, approval, admin, and support actions
 - Idempotent reminder processing and replay
+
+## External Task Lifecycle
+
+Simi is designed to later manage tasks originating from other applications without disturbing native tasks or existing insurance customers.
+
+Examples:
+
+- XChainGen order placed -> fulfillment task
+- XChainGen payment failed -> customer follow-up task
+- Food order delayed -> kitchen/manager escalation
+- GyantrAI purchase order pending approval -> approval task
+- GyantrAI vendor invoice received -> accountant review task
+
+The source application remains the system of record for its business object. Simi owns task assignment, reminders, escalation, messaging, and task audit.
+
+See [External Task Lifecycle Management](docs/external-task-lifecycle-management.md).
 
 ## Admin Portal
 
@@ -149,7 +167,8 @@ Use the issue files as the source of truth for implementation. A good first deve
 10. ATM-010 Frontend Task Workbench and Dashboards
 11. ATM-018 Admin Portal
 12. ATM-019 Database Migrations and GitHub Pipelines
-13. ATM-011 Guardrails, Observability, and Test Suite
+13. ATM-020 External Task Lifecycle Management
+14. ATM-011 Guardrails, Observability, and Test Suite
 
 ## CI/CD and Migrations
 

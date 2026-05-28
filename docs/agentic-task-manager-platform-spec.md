@@ -15,6 +15,7 @@ The product is not a single insurance reminder bot. It is:
 Core platform responsibilities stay generic:
 
 - Task creation, assignment, status, reminders, escalation, comments, and audit history.
+- External task lifecycle management for tasks originating in other applications.
 - Communication through selected customer channels such as Telegram and WhatsApp.
 - Workflow templates and scheduled jobs.
 - AI orchestration, entity extraction, task planning, and message drafting.
@@ -252,6 +253,7 @@ Generic records:
 - Approval requests for sensitive, bulk, or externally visible actions.
 - Message templates for approved Telegram and WhatsApp communication.
 - Notification preferences for contacts and internal users.
+- External applications, external task links, inbound task events, and outbound sync callbacks.
 - Domain entities for flexible vertical expansion.
 
 Vertical records:
@@ -451,6 +453,7 @@ Columns:
 - `priority text not null default 'normal'`
 - `domain text not null default 'general'`
 - `source text not null default 'manual'`
+- `external_task_link_id uuid references external_task_links(id)`
 - `created_by_user_id uuid references users(id)`
 - `created_by_agent_id uuid references agent_definitions(id)`
 - `primary_contact_id uuid references contacts(id)`
@@ -477,6 +480,9 @@ Domains:
 - `insurance`
 - `construction`
 - `doctors_office`
+- `commerce`
+- `food_ops`
+- `erp`
 
 Sensitivity:
 
@@ -499,6 +505,160 @@ Columns:
 - `created_at timestamptz not null`
 
 Constraint: exactly one of `assignee_user_id` or `assignee_contact_id` must be set.
+
+### external_applications
+
+Stores applications that can create or sync external tasks into Simi. Examples: XChainGen, GyantrAI, ecommerce storefronts, food-ordering systems, ERP modules, CRM systems.
+
+Columns:
+
+- `id uuid primary key`
+- `organization_id uuid references organizations(id)`
+- `key text not null`
+- `name text not null`
+- `app_type text not null`
+- `status text not null default 'active'`
+- `auth_type text not null default 'api_key'`
+- `secret_ref text`
+- `allowed_event_types jsonb not null default '[]'`
+- `callback_url text`
+- `metadata jsonb not null default '{}'`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+- unique `(organization_id, key)`
+
+Use `organization_id null` for platform-level internal applications.
+
+App types:
+
+- `xchaingen`
+- `gyantrai`
+- `ecommerce`
+- `food_business`
+- `erp`
+- `crm`
+- `custom`
+
+### external_task_links
+
+Links a Simi task to an external application's business object or task reference. The external app remains the system of record for its business object; Simi owns reminders, assignments, escalation, and task lifecycle inside Simi.
+
+Columns:
+
+- `id uuid primary key`
+- `organization_id uuid not null references organizations(id)`
+- `external_application_id uuid not null references external_applications(id)`
+- `external_task_id text not null`
+- `external_object_type text`
+- `external_object_id text`
+- `external_url text`
+- `sync_direction text not null default 'bidirectional'`
+- `external_status text`
+- `last_simi_status text`
+- `last_event_id uuid`
+- `last_synced_at timestamptz`
+- `metadata jsonb not null default '{}'`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+- unique `(organization_id, external_application_id, external_task_id)`
+
+Sync directions:
+
+- `inbound_only`
+- `outbound_only`
+- `bidirectional`
+
+### external_task_events
+
+Stores inbound lifecycle events from external applications and outbound sync attempts from Simi.
+
+Columns:
+
+- `id uuid primary key`
+- `organization_id uuid not null references organizations(id)`
+- `external_application_id uuid not null references external_applications(id)`
+- `external_task_link_id uuid references external_task_links(id)`
+- `direction text not null`
+- `event_type text not null`
+- `idempotency_key text not null`
+- `external_event_id text`
+- `payload jsonb not null`
+- `processing_status text not null default 'pending'`
+- `error_code text`
+- `error_message text`
+- `processed_at timestamptz`
+- `created_at timestamptz not null`
+- unique `(organization_id, external_application_id, idempotency_key)`
+
+Directions:
+
+- `inbound`
+- `outbound`
+
+Processing statuses:
+
+- `pending`
+- `processed`
+- `ignored`
+- `failed`
+- `retrying`
+
+Supported event types:
+
+- `task.created`
+- `task.updated`
+- `task.assigned`
+- `task.completed`
+- `task.canceled`
+- `task.failed`
+- `task.reopened`
+- `object.created`
+- `object.updated`
+- `comment.created`
+
+### external_status_mappings
+
+Maps external statuses into Simi task statuses per application/object type.
+
+Columns:
+
+- `id uuid primary key`
+- `organization_id uuid references organizations(id)`
+- `external_application_id uuid not null references external_applications(id)`
+- `external_object_type text`
+- `external_status text not null`
+- `simi_status text not null`
+- `simi_priority text`
+- `metadata jsonb not null default '{}'`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+- unique `(organization_id, external_application_id, external_object_type, external_status)`
+
+Example mapping:
+
+- `new` -> `open`
+- `assigned` -> `in_progress`
+- `waiting_customer` -> `waiting`
+- `done` -> `completed`
+- `canceled` -> `canceled`
+- `failed` -> `failed`
+
+### webhook_subscriptions
+
+Stores outbound webhook subscriptions for notifying external applications when Simi task lifecycle changes.
+
+Columns:
+
+- `id uuid primary key`
+- `organization_id uuid not null references organizations(id)`
+- `external_application_id uuid not null references external_applications(id)`
+- `event_type text not null`
+- `target_url text not null`
+- `secret_ref text`
+- `status text not null default 'active'`
+- `retry_policy jsonb not null default '{}'`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
 
 ### reminders
 
@@ -899,6 +1059,21 @@ Core:
 - `POST /api/v1/reminders`
 - `POST /api/v1/reminders/{reminder_id}/ack`
 
+External task lifecycle:
+
+- `POST /api/v1/external/tasks/events`
+- `GET /api/v1/external/tasks/{external_task_link_id}`
+- `POST /api/v1/external/tasks/{external_task_link_id}/sync`
+- `GET /api/v1/external/applications`
+- `POST /api/v1/external/applications`
+- `PATCH /api/v1/external/applications/{external_application_id}`
+- `GET /api/v1/external/events`
+- `POST /api/v1/external/events/{event_id}/retry`
+- `GET /api/v1/external/status-mappings`
+- `POST /api/v1/external/status-mappings`
+- `GET /api/v1/external/webhook-subscriptions`
+- `POST /api/v1/external/webhook-subscriptions`
+
 Agentic:
 
 - `POST /api/v1/ai/command`
@@ -1008,6 +1183,82 @@ Implementation details:
 - Respect template-message rules for outbound business-initiated messages.
 - Track opt-out replies such as STOP.
 - Avoid PHI or sensitive details unless tenant policy explicitly allows the channel.
+
+## External Task Lifecycle Management
+
+External applications can send task lifecycle events to Simi, and Simi can send task lifecycle updates back to those applications. This is a platform extension designed into the data model from the start, but implementation can be deferred until after the Insurance MVP.
+
+Principles:
+
+- The source application remains the system of record for its business object.
+- Simi owns reminders, assignments, escalation, communication, and internal task lifecycle.
+- External events must be idempotent.
+- Every inbound and outbound lifecycle event must be auditable.
+- External applications must authenticate with scoped credentials.
+- Status mapping must be configurable per tenant and application.
+
+Examples:
+
+- XChainGen order placed -> Simi creates fulfillment task.
+- XChainGen payment failed -> Simi creates customer follow-up task.
+- Food order delayed -> Simi escalates to kitchen manager and optionally notifies customer.
+- GyantrAI purchase order pending approval -> Simi creates approval task.
+- GyantrAI vendor invoice received -> Simi creates accountant review task.
+- ERP material shortage -> Simi creates manager escalation task.
+
+Inbound event flow:
+
+```text
+External App
+    |
+    v
+POST /api/v1/external/tasks/events
+    |
+    v
+Authenticate application and tenant
+    |
+    v
+Validate idempotency key
+    |
+    v
+Create external_task_event
+    |
+    v
+Create or update external_task_link
+    |
+    v
+Create or update Simi task
+    |
+    v
+Write audit event
+```
+
+Outbound sync flow:
+
+```text
+Simi task changes
+    |
+    v
+Find external_task_link
+    |
+    v
+Map Simi status to external status if needed
+    |
+    v
+Create outbound external_task_event
+    |
+    v
+Deliver webhook callback
+    |
+    v
+Retry on failure with capped backoff
+```
+
+Deferred implementation:
+
+- Add schema support in early migrations.
+- Build APIs and sync workers after core task/reminder/channel foundations are stable.
+- Add XChainGen and GyantrAI adapters as first concrete integrations.
 
 ## Agent Design
 
@@ -1192,7 +1443,8 @@ Build the platform in a narrow but extensible order:
 3. General Task Agent and Insurance Agent only.
 4. Insurance MVP UI: command box, renewals due, follow-up queue, needs approval, customer/policy detail.
 5. Admin portal for onboarding and managing tenant customers.
-6. Construction Agent and Doctors Office Agent after the insurance workflow is validated with real usage.
+6. External task lifecycle gateway for XChainGen, GyantrAI, and other applications.
+7. Construction Agent and Doctors Office Agent after the insurance workflow is validated with real usage.
 
 Do not build construction and doctors-office production workflows before the insurance workflow proves the shared platform.
 
@@ -1283,3 +1535,4 @@ Use the issue files in `issues/` as implementation tickets:
 - `017-TASK-approval-sessions-templates-preferences.md`
 - `018-STORY-admin-portal-customer-management.md`
 - `019-TASK-database-migrations-and-github-pipelines.md`
+- `020-STORY-external-task-lifecycle-management.md`
