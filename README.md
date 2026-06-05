@@ -48,6 +48,8 @@ The implementation should follow the same stack pattern as GyantrAI:
 - Testing: pytest, pytest-asyncio, pytest-cov, Vitest, React Testing Library, MSW, Playwright
 - Deployment: Docker, Cloud Run or equivalent, Cloud SQL PostgreSQL, Redis/Memorystore, Secret Manager
 
+Frontend UX should follow the established GyantrAI product style: rich AI-era interfaces, polished command surfaces, responsive layouts, high-signal dashboards, refined loading/empty/error states, and consistent Tailwind/Radix/shadcn-style components.
+
 ## Documentation
 
 Start here:

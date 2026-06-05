@@ -29,6 +29,7 @@ Implement the shared database foundation for tenants, users, contacts, channels,
    - `workflow_templates`
    - `workflow_runs`
    - `agent_definitions`
+   - `organization_agent_configs`
    - `agent_invocations`
    - `audit_events`
    - `domain_entities`
@@ -45,6 +46,8 @@ Implement the shared database foundation for tenants, users, contacts, channels,
    - Unique dedupe key for reminders: `(organization_id, dedupe_key)`.
    - Unique inbound provider message key: `(channel, external_message_id)`.
    - Contact/user channel identity uniqueness.
+   - Unique tenant agent config: `(organization_id, agent_definition_id)`.
+   - At most one primary specialized agent per tenant unless multi-agent mode is explicitly enabled.
    - Assignment recipient check constraints.
 
 4. Add indexes:
@@ -61,6 +64,7 @@ Implement the shared database foundation for tenants, users, contacts, channels,
    - one organization
    - owner/admin user
    - system agent definitions
+   - tenant agent config enabling `insurance_agent` as primary for the seed organization
    - insurance workflow templates
 
 ## Acceptance Criteria
@@ -68,6 +72,7 @@ Implement the shared database foundation for tenants, users, contacts, channels,
 - [ ] All models are async SQLAlchemy compatible.
 - [ ] Alembic migration applies cleanly to a fresh PostgreSQL database.
 - [ ] Tenant isolation columns exist on all tenant-owned records.
+- [ ] Tenant agent configuration can enable a primary specialized agent per organization.
 - [ ] Reminder deduplication constraint exists.
 - [ ] Seed data can be inserted idempotently.
 
@@ -77,6 +82,7 @@ Implement the shared database foundation for tenants, users, contacts, channels,
 - Attempt duplicate reminder dedupe key and verify failure.
 - Attempt assignment with both user and contact set and verify failure.
 - Verify insurance policy can link to policyholder contact and assigned agent.
+- Verify tenant agent config exposes `insurance_agent` as the seed tenant primary agent.
 - Verify cross-tenant IDs are rejected at service layer.
 
 ## Validation
@@ -87,4 +93,3 @@ alembic upgrade head
 python -m pytest tests/unit/test_models.py -v
 python -m pytest tests/integration/test_database_constraints.py -v
 ```
-

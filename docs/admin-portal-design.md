@@ -142,6 +142,8 @@ Important metrics:
    - Insurance Agent for insurance customers
    - Construction Agent for construction customers
    - Doctors Office Agent only after privacy review
+   - mark one specialized agent as the tenant primary agent
+   - store tenant agent assignment in `organization_agent_configs`
 
 4. Configure channels:
    - Telegram bot connection
@@ -174,6 +176,7 @@ Important metrics:
 The admin can:
 
 - Enable/disable agents per tenant.
+- Set the tenant primary specialized agent.
 - View agent definitions and current versions.
 - Configure workflow templates.
 - Configure industry defaults.
@@ -183,6 +186,7 @@ The admin can:
 Agent controls:
 
 - status
+- primary tenant agent flag
 - allowed tools
 - approval policy
 - max bulk action size
@@ -348,7 +352,9 @@ Operational queues:
 
 ## Frontend UX
 
-Use a dense operational UI, not a marketing layout.
+Use a dense operational UI, not a marketing layout. The visual design should follow the established GyantrAI product experience: premium AI-era polish, clean Tailwind/Radix/shadcn-style components, lucide icons, refined interaction states, responsive layouts, and consistent theme tokens.
+
+The admin portal should feel like an AI control plane: efficient, high-signal, and polished. It should not feel like a generic CRUD admin template.
 
 Primary admin screens:
 
@@ -363,8 +369,10 @@ Primary admin screens:
 
 Design rules:
 
+- Reuse or mirror GyantrAI typography, spacing, color tokens, component styling, navigation patterns, and interaction patterns where possible.
 - Use compact tables for operational data.
 - Use badges for status and health.
+- Use skeletons, clear empty states, error states, optimistic feedback where appropriate, and toast notifications for completed actions.
 - Use clear destructive-action confirmations.
 - Use lucide icons for actions.
 - Do not expose secrets.

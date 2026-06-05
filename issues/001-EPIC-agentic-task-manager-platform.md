@@ -47,7 +47,7 @@ Read `docs/agentic-task-manager-platform-spec.md` before implementation.
 
 - [ ] The system supports generic tasks, reminders, assignments, contacts, and audit events.
 - [ ] Tenant owners can choose Telegram or WhatsApp as communication channels.
-- [ ] AI commands route to specialized agents.
+- [ ] AI commands route only to specialized agents enabled for the tenant.
 - [ ] Insurance renewal workflow is production-ready for first customer.
 - [ ] Construction and doctors-office verticals have working MVP flows.
 - [ ] Automated tests cover core workflows and guardrails.
@@ -59,4 +59,3 @@ Read `docs/agentic-task-manager-platform-spec.md` before implementation.
 - Run frontend tests with `npm run test`.
 - Run frontend typecheck with `npm run typecheck`.
 - Run at least one E2E smoke test for insurance renewal workflow.
-

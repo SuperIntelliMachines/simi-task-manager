@@ -43,6 +43,7 @@ Harden the platform with tenant isolation, RBAC, approval gates, privacy control
    - backend unit tests
    - backend integration tests
    - frontend component tests
+   - frontend visual/UX regression checks for GyantrAI-aligned app shell, command bar, dashboard, drawer, loading, empty, and approval states
    - E2E smoke tests
    - mocked Telegram/WhatsApp/LLM providers
 
@@ -59,6 +60,7 @@ Harden the platform with tenant isolation, RBAC, approval gates, privacy control
 - [ ] Sensitive AI actions require approval.
 - [ ] External messaging respects consent and opt-out.
 - [ ] Failed reminders are visible and replayable.
+- [ ] Critical frontend states preserve the GyantrAI-aligned UX quality across desktop and mobile.
 - [ ] No automated tests call real Telegram, WhatsApp, or LLM providers.
 - [ ] Runbooks exist for operations.
 
@@ -71,6 +73,7 @@ Harden the platform with tenant isolation, RBAC, approval gates, privacy control
 - Sensitive medical outbound message requires approval.
 - Failed reminder replay does not duplicate already-sent messages.
 - Agent invocation logs guardrail decision.
+- Approval-required UI, loading states, empty states, and admin replay confirmations render without layout breakage.
 
 ## Validation
 
@@ -86,4 +89,3 @@ npm run test:coverage
 npm run build
 npm run test:e2e
 ```
-

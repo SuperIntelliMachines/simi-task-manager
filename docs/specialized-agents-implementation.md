@@ -23,7 +23,7 @@ Inbound Command
       v
 AI Orchestrator
       |
-      +--> Domain Classifier
+      +--> Tenant Agent Router
       |
       +--> Guardrail Precheck
       |
@@ -65,6 +65,15 @@ Recommended keys:
 - `insurance_agent`
 - `construction_agent`
 - `doctors_office_agent`
+
+Tenant assignment:
+
+- Specialized agents are enabled per tenant during onboarding.
+- Tenant agent assignment is stored in `organization_agent_configs`.
+- A tenant normally has one primary specialized agent, for example an insurance agency tenant uses `insurance_agent`.
+- Inbound WhatsApp, Telegram, or web messages first resolve the tenant, then load that tenant's enabled agents.
+- Message text must not route work to a specialized agent that is not enabled for the tenant.
+- The General Task Agent can be enabled for generic reminders, but it cannot escape tenant agent configuration and route into a disabled vertical.
 
 ## Orchestrator Contract
 
@@ -151,9 +160,17 @@ Agents must produce this shape before tools execute.
 }
 ```
 
-## Domain Classifier
+## Tenant Agent Router and Scoped Classifier
 
-The classifier decides which agent handles a command.
+The router decides which tenant-enabled agent handles a command. The classifier is scoped by tenant configuration; it never chooses from the full global list of platform agents unless those agents are enabled for that tenant.
+
+Routing behavior:
+
+- If the tenant has one primary specialized agent, route normal user commands to that agent.
+- If the tenant also has General Task Agent enabled, allow generic task intents to stay generic when they do not require vertical tools.
+- If the tenant has multiple specialized agents enabled, classify only among those enabled agents.
+- If the command appears to require a disabled domain, ask clarification or reject with a clear explanation.
+- If a clarification session exists, resume the same agent that created the session.
 
 Insurance indicators:
 
@@ -171,12 +188,13 @@ General task indicators:
 
 - remind, assign, follow up, schedule, complete, todo, task, call, email without strong vertical context
 
-Classifier behavior:
+Scoped classifier behavior:
 
-- If a vertical confidence is high, route to that agent.
-- If two domains are plausible, ask one clarification.
-- If no domain is strong, route to General Task Agent.
-- If a command includes patient-specific content, choose Doctors Office Agent even if the task is administrative.
+- If a vertical confidence is high and that agent is enabled for the tenant, route to that agent.
+- If two enabled domains are plausible, ask one clarification.
+- If no enabled specialized domain is strong and General Task Agent is enabled, route to General Task Agent.
+- If no enabled agent can handle the command safely, ask clarification or reject.
+- Patient-specific content may route to Doctors Office Agent only when that agent is enabled for the tenant; otherwise reject or escalate for admin configuration review.
 
 ## Shared Tools
 
@@ -631,12 +649,13 @@ Examples:
 
 ## Testing Matrix
 
-### Classifier Tests
+### Tenant Router and Classifier Tests
 
-- Insurance command routes to Insurance Agent.
-- Construction command routes to Construction Agent.
-- Patient command routes to Doctors Office Agent.
-- Generic reminder routes to General Task Agent.
+- Insurance tenant command routes to the tenant-enabled Insurance Agent.
+- Construction tenant command routes to the tenant-enabled Construction Agent.
+- Patient command routes to Doctors Office Agent only for a tenant where that agent is enabled.
+- Generic reminder routes to General Task Agent when enabled for the tenant.
+- Disabled-domain command does not route to a globally registered agent.
 - Ambiguous command asks clarification.
 
 ### Agent Unit Tests
@@ -664,7 +683,7 @@ Examples:
 ## Initial Build Order
 
 1. Shared agent contracts and fake LLM provider.
-2. Agent registry and domain classifier.
+2. Agent registry, tenant agent router, and scoped classifier.
 3. Tool executor with permission and tenant checks.
 4. General Task Agent.
 5. Insurance Agent.
@@ -672,4 +691,3 @@ Examples:
 7. Doctors Office Agent.
 8. Approval and clarification persistence.
 9. Full regression test suite.
-

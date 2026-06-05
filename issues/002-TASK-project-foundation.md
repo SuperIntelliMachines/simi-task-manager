@@ -9,7 +9,7 @@ assignees: ""
 
 ## Objective
 
-Create the application foundation using the same stack conventions as GyantrAI: FastAPI, Python 3.11, SQLAlchemy async, Alembic, PostgreSQL, Redis/Celery, React 18, TypeScript, Vite, Tailwind, Radix/shadcn-style components, TanStack Query, pytest, Vitest, and Playwright.
+Create the application foundation using the same stack conventions and frontend visual direction as GyantrAI: FastAPI, Python 3.11, SQLAlchemy async, Alembic, PostgreSQL, Redis/Celery, React 18, TypeScript, Vite, Tailwind, Radix/shadcn-style components, TanStack Query, pytest, Vitest, and Playwright.
 
 ## Implementation Steps
 
@@ -38,6 +38,8 @@ Create the application foundation using the same stack conventions as GyantrAI: 
    - Vite + React + TypeScript
    - Tailwind CSS
    - shared UI components
+   - GyantrAI-aligned theme tokens, typography, spacing, colors, shadows, radius, and component styling
+   - rich AI-era UX foundation: polished app shell, command surfaces, loading/empty/error states, toast feedback, responsive layout primitives
    - TanStack Query provider
    - routing shell
    - test setup with Vitest, RTL, MSW
@@ -73,6 +75,7 @@ Create the application foundation using the same stack conventions as GyantrAI: 
 
 - [ ] Backend app starts locally.
 - [ ] Frontend app starts locally.
+- [ ] Frontend foundation includes GyantrAI-aligned theme tokens and reusable UI primitives.
 - [ ] PostgreSQL and Redis are available in local Docker compose.
 - [ ] Alembic is configured.
 - [ ] Health endpoints return successful responses.
@@ -91,4 +94,3 @@ npm run typecheck
 npm run test
 npm run build
 ```
-

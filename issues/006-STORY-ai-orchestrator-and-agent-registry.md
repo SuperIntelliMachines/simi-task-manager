@@ -9,7 +9,7 @@ assignees: ""
 
 ## Objective
 
-Implement the AI orchestration layer that classifies user intent, routes work to specialized agents, validates structured output, enforces guardrails, and executes approved tools.
+Implement the AI orchestration layer that resolves tenant context, selects from tenant-enabled agents, classifies user intent within the allowed agent scope, validates structured output, enforces guardrails, and executes approved tools.
 
 ## Implementation Steps
 
@@ -22,8 +22,10 @@ Implement the AI orchestration layer that classifies user intent, routes work to
 2. Create orchestrator service:
    - normalize command input
    - load tenant/actor context
-   - classify domain and intent
-   - select agent
+   - load tenant-enabled agent configuration
+   - select tenant primary agent when one specialized agent is enabled
+   - classify domain only among tenant-enabled agents when multiple specialized agents are enabled
+   - classify intent within the selected agent
    - call LLM provider with tool policy
    - parse structured response
    - validate confidence and required fields
@@ -64,7 +66,8 @@ Implement the AI orchestration layer that classifies user intent, routes work to
 
 ## Acceptance Criteria
 
-- [ ] Commands route to correct specialized agent.
+- [ ] Commands route only to agents enabled for the tenant.
+- [ ] Single-specialized-agent tenants use that tenant primary agent by default.
 - [ ] Low-confidence commands ask for clarification.
 - [ ] Sensitive actions require approval.
 - [ ] Tools cannot bypass permissions.
@@ -72,9 +75,10 @@ Implement the AI orchestration layer that classifies user intent, routes work to
 
 ## Test Cases
 
-- "Renew policy for Ravi" routes to Insurance Agent.
-- "Assign wiring to Kumar at Site A" routes to Construction Agent.
-- "Verify insurance for patient appointment" routes to Doctors Office Agent and marks `phi_possible`.
+- Insurance tenant: "Renew policy for Ravi" routes to Insurance Agent.
+- Construction tenant: "Assign wiring to Kumar at Site A" routes to Construction Agent.
+- Doctors-office tenant: "Verify insurance for patient appointment" routes to Doctors Office Agent and marks `phi_possible`.
+- Insurance tenant mentioning "patient appointment" does not route to Doctors Office Agent unless that agent is enabled for the tenant.
 - Cross-tenant tool input is rejected.
 - Bulk external message requires human approval.
 - Prompt injection text does not override tool policy.
@@ -88,4 +92,3 @@ python -m pytest tests/unit/ai/test_agent_registry.py -v
 python -m pytest tests/unit/ai/test_guardrails.py -v
 python -m pytest tests/integration/test_ai_command_api.py -v
 ```
-

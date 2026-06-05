@@ -21,7 +21,7 @@ Core platform responsibilities stay generic:
 - AI orchestration, entity extraction, task planning, and message drafting.
 - Tenant isolation, permissions, compliance guardrails, and observability.
 
-Specialized agents provide business knowledge:
+Specialized agents provide business knowledge. A specialized agent is enabled per tenant during onboarding; inbound WhatsApp, Telegram, or web commands must not globally select any platform agent based only on message text.
 
 - Insurance Agent: policies, premiums, renewals, quotes, demos, leads.
 - Construction Agent: projects, sites, workers, work orders, completion proof, owner updates.
@@ -62,6 +62,16 @@ Frontend:
 - lucide-react icons
 - Vitest, React Testing Library, MSW
 - Playwright for end-to-end smoke tests
+
+Frontend UX direction:
+
+- Follow the established GyantrAI visual language and frontend interaction quality.
+- Build a rich AI-era product experience, not a plain CRUD dashboard.
+- Use a polished command-forward interface for AI actions, previews, approvals, and clarifications.
+- Reuse or mirror GyantrAI theme tokens for typography, spacing, colors, shadows, radius, component density, and motion.
+- Use Tailwind, Radix/shadcn-style components, lucide icons, responsive layouts, skeleton loading states, empty/error states, and toast/action feedback consistently.
+- Keep customer-facing task workbench screens elegant and high-signal.
+- Keep admin screens dense and operational, while still matching the premium GyantrAI-style control-plane UX.
 
 Deployment and operations:
 
@@ -133,7 +143,7 @@ Needs:
 ### Insurance
 
 1. Agent enters or messages: "Follow up with Ravi about his term policy demo in 3 days."
-2. AI identifies the Insurance Agent domain.
+2. The tenant is already configured with the Insurance Agent, and the AI identifies the insurance intent.
 3. The system creates a lead follow-up task assigned to the agent.
 4. Reminder is sent to the agent on the due date.
 5. Agent marks "interested", "not interested", or "follow-up later".
@@ -150,7 +160,7 @@ Premium renewal journey:
 ### Construction
 
 1. Project manager says in Telegram: "Assign Ravi to complete wiring at Site A by tomorrow."
-2. Construction Agent extracts worker, site, work item, and due date.
+2. The tenant is configured with the Construction Agent, which extracts worker, site, work item, and due date.
 3. A task is created and assigned to Ravi.
 4. Ravi receives a WhatsApp or Telegram reminder.
 5. Ravi replies "done" and optionally uploads a photo.
@@ -160,7 +170,7 @@ Premium renewal journey:
 ### Doctors Office
 
 1. Office manager says: "Remind front desk to verify insurance for tomorrow's 10 AM appointment."
-2. Doctors Office Agent creates an internal staff task.
+2. The tenant is configured with the Doctors Office Agent, which creates an internal staff task.
 3. The system classifies the task as privacy-sensitive.
 4. Patient-identifying data is limited to authorized staff and approved channels.
 5. Completion is tracked with audit history.
@@ -214,10 +224,13 @@ Normalize input into a channel-agnostic message
 Run safety and scope guardrails
         |
         v
-Classify intent and business domain
+Load tenant-enabled agent configuration
         |
         v
-Route to specialized agent
+Select tenant primary agent, or classify only among enabled agents
+        |
+        v
+Classify intent within the selected agent's allowed domain
         |
         v
 Extract entities and propose actions
@@ -832,6 +845,33 @@ Columns:
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
+### organization_agent_configs
+
+Stores which agents are enabled for each tenant. This is the primary source for specialized agent selection; inbound message text may refine intent, but it must not route outside the tenant's enabled agents.
+
+Columns:
+
+- `id uuid primary key`
+- `organization_id uuid not null references organizations(id)`
+- `agent_definition_id uuid not null references agent_definitions(id)`
+- `domain text not null`
+- `status text not null default 'enabled'`
+- `is_primary boolean not null default false`
+- `tool_policy_override jsonb not null default '{}'`
+- `guardrail_policy_override jsonb not null default '{}'`
+- `workflow_defaults jsonb not null default '{}'`
+- `enabled_channels jsonb not null default '[]'`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+- unique `(organization_id, agent_definition_id)`
+
+Rules:
+
+- A tenant normally has one primary specialized agent, such as `insurance_agent`.
+- The General Task Agent may be enabled as a fallback for generic tasks, but it cannot route to a disabled vertical agent.
+- If multiple specialized agents are enabled for a tenant, classification may choose only among those enabled agents.
+- If a command appears to belong to a disabled domain, ask clarification or reject with an explanation instead of routing globally.
+
 ### agent_invocations
 
 Columns:
@@ -1266,8 +1306,11 @@ Deferred implementation:
 
 Responsibilities:
 
-- Classify domain and intent.
-- Select specialized agent.
+- Resolve tenant and actor from authenticated web context or verified channel connection.
+- Load `organization_agent_configs`.
+- Select the tenant primary agent when only one specialized agent is enabled.
+- Classify only among tenant-enabled agents when multiple specialized agents are enabled.
+- Classify intent within the selected agent's allowed domain.
 - Provide tenant context, actor role, available tools, and guardrail policy.
 - Require structured output from agents.
 - Validate output before tool execution.
@@ -1343,7 +1386,8 @@ Doctors Office Agent:
 General Task Agent:
 
 - Handles normal task creation, reminders, summaries, and rescheduling.
-- Routes to specialized agents when domain-specific terms are detected.
+- Handles generic commands within the tenant's enabled agent scope.
+- Does not route to disabled vertical agents based only on detected terms.
 
 ## Guardrails
 
@@ -1399,7 +1443,9 @@ Require approval before:
 
 Backend unit tests:
 
-- Domain classification routes to correct agent.
+- Tenant agent routing chooses the tenant primary agent for single-agent tenants.
+- Multi-agent tenants classify only among enabled agents.
+- Commands for disabled domains ask clarification or are rejected instead of routing globally.
 - Tool validators reject missing fields and cross-tenant IDs.
 - Reminder schedule generation creates the correct stages.
 - Deduplication prevents duplicate reminders.

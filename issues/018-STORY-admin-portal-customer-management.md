@@ -11,6 +11,8 @@ assignees: ""
 
 Build an internal admin portal for managing customer tenants, onboarding, users, enabled agents, channels, message templates, usage, support access, failed reminders, and audit history.
 
+The admin portal should use the same GyantrAI-aligned visual system as the customer task workbench: polished Tailwind/Radix/shadcn-style components, lucide icons, refined loading/empty/error states, and responsive layouts. Keep the admin experience dense and operational, but make it feel like a premium AI-era control plane rather than a plain CRUD back office.
+
 ## Reference
 
 Read `docs/admin-portal-design.md`.
@@ -35,6 +37,7 @@ Read `docs/admin-portal-design.md`.
 4. Implement customer onboarding APIs:
    - create owner user
    - enable agents
+   - assign one primary specialized agent for the tenant
    - configure default workflow templates
    - configure default message templates
    - run sample workflow
@@ -49,6 +52,7 @@ Read `docs/admin-portal-design.md`.
    - support access create/revoke
 
 6. Build frontend admin portal:
+   - GyantrAI-aligned app shell, theme tokens, navigation, tables, tabs, drawers, forms, dialogs, and status badges
    - customer list
    - customer detail tabs
    - onboarding checklist
@@ -71,11 +75,12 @@ Read `docs/admin-portal-design.md`.
 ## Acceptance Criteria
 
 - [ ] Platform admin can create and configure a customer tenant.
-- [ ] Admin can enable Insurance Agent for a customer.
+- [ ] Admin can enable Insurance Agent and mark it as the tenant primary specialized agent for an insurance customer.
 - [ ] Admin can configure Telegram/WhatsApp channel placeholders and send test message.
 - [ ] Admin can view failed reminders and retry safely.
 - [ ] Admin can view approval requests and agent invocations.
 - [ ] Support access requires reason and expiry.
+- [ ] Admin portal follows the GyantrAI-style rich AI control-plane UX while preserving dense operational workflows.
 - [ ] Admin portal masks all secrets.
 - [ ] All admin changes write audit events.
 
@@ -83,12 +88,13 @@ Read `docs/admin-portal-design.md`.
 
 - Non-admin receives forbidden response for admin customer list.
 - Creating customer creates organization and owner membership.
-- Enabling agent creates tenant agent configuration.
+- Enabling agent creates tenant agent configuration with primary agent selection.
 - Channel health response does not expose provider token.
 - Failed reminder retry checks dedupe and does not duplicate sent message.
 - Support access expires and blocks subsequent tenant access.
 - Customer list filters by status, industry, and health.
 - Onboarding checklist reflects setup progress.
+- Admin tables, tabs, drawers, dialogs, loading states, empty states, and destructive confirmations match the GyantrAI-aligned theme.
 
 ## Validation
 
@@ -103,4 +109,3 @@ npm run typecheck
 npm run test -- --run Admin
 npm run build
 ```
-
