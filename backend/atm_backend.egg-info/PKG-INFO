@@ -1,0 +1,36 @@
+Metadata-Version: 2.4
+Name: atm-backend
+Version: 0.1.0
+Summary: Agentic Task Manager backend
+Requires-Python: <3.13,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.116.0
+Requires-Dist: uvicorn[standard]>=0.35.0
+Requires-Dist: pydantic>=2.11.0
+Requires-Dist: pydantic-settings>=2.10.0
+Requires-Dist: sqlalchemy[asyncio]>=2.0.43
+Requires-Dist: asyncpg>=0.30.0
+Requires-Dist: alembic>=1.16.0
+Requires-Dist: redis>=6.2.0
+Requires-Dist: celery>=5.5.0
+Requires-Dist: httpx>=0.28.0
+Requires-Dist: orjson>=3.11.0
+Requires-Dist: python-dateutil>=2.9.0
+Requires-Dist: passlib[bcrypt]>=1.7.4
+Requires-Dist: langchain>=0.3.0
+Requires-Dist: langchain-openai>=0.3.0
+Requires-Dist: langchain-anthropic>=0.3.0
+Requires-Dist: openai>=1.100.0
+Requires-Dist: anthropic>=0.61.0
+Requires-Dist: python-jose[cryptography]>=3.5.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.4.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=1.1.0; extra == "dev"
+Requires-Dist: pytest-cov>=6.2.0; extra == "dev"
+Requires-Dist: ruff>=0.12.0; extra == "dev"
+Requires-Dist: black>=25.1.0; extra == "dev"
+Requires-Dist: mypy>=1.17.0; extra == "dev"
+
+# Backend
+
+FastAPI service for ATM.
