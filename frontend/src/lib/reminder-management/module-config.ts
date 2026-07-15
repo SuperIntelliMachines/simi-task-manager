@@ -47,10 +47,6 @@ export async function getReminderModuleConfig(module: ReminderModuleKey): Promis
     module,
     label: summary?.name ?? module,
     triggers: [...dateTriggers, ...workflowTriggers],
-    recipients: (schema.recipient_types ?? []).map((item) => ({
-      id: item.id,
-      label: item.label,
-    })),
     supportedChannels: schema.supported_channels ?? [],
     defaultTemplate: schema.default_template ?? null,
     supportsDate: summary?.supports_date ?? dateTriggers.length > 0,

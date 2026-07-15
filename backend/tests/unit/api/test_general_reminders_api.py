@@ -23,7 +23,6 @@ def _sample_payload(**overrides):
             "offset_unit": "days",
             "direction": "before",
         },
-        "recipient": {"type": "role", "value": ["warehouse_manager"]},
         "channels": ["email", "in_app"],
         "template_key": "generic_reminder",
         "is_active": True,
@@ -49,7 +48,6 @@ async def test_create_general_reminder(authed_async_client):
     assert data["trigger"] == {"type": "date", "key": "reorder_date"}
     assert data["schedule"]["offset_unit"] == "days"
     assert data["schedule"]["direction"] == "before"
-    assert data["recipient"]["type"] == "role"
     assert data["channels"] == ["email", "in_app"]
     assert data["is_active"] is True
     assert data["id"]

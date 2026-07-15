@@ -33,14 +33,6 @@ export function formatSchedule(reminder: ManagedReminder): string {
   });
 }
 
-export function formatRecipients(reminder: ManagedReminder): string {
-  if (!reminder.recipients.length) return "—";
-  if (reminder.recipients.length <= 2) {
-    return reminder.recipients.map((item) => item.label).join(", ");
-  }
-  return `${reminder.recipients[0].label} +${reminder.recipients.length - 1}`;
-}
-
 export function formatChannels(channels: string[]): string {
   if (!channels.length) return "—";
   return channels.map((channel) => getReminderChannelLabel(channel)).join(", ");
@@ -70,17 +62,18 @@ export function formatDate(value: string | null | undefined): string {
   });
 }
 
-export function statusToneClass(status: ReminderStatus | ReminderHistoryStatus): string {
-  if (status === "active" || status === "sent") {
+export function statusToneClass(status: ReminderStatus | ReminderHistoryStatus | string): string {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "active" || normalized === "sent") {
     return "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30";
   }
-  if (status === "disabled" || status === "skipped") {
+  if (normalized === "disabled" || normalized === "skipped" || normalized === "cancelled") {
     return "bg-slate-500/15 text-slate-300 ring-slate-500/30";
   }
-  if (status === "failed") {
+  if (normalized === "failed") {
     return "bg-rose-500/15 text-rose-300 ring-rose-500/30";
   }
-  if (status === "pending" || status === "draft") {
+  if (normalized === "pending" || normalized === "draft") {
     return "bg-amber-500/15 text-amber-200 ring-amber-500/30";
   }
   return "bg-slate-500/15 text-slate-300 ring-slate-500/30";

@@ -24,7 +24,6 @@ export type ReminderModuleSummary = {
 export type ReminderModuleSchema = {
   trigger_types: Array<{ key: string; label: string; type: string }>;
   workflow_events: Array<{ key: string; label: string }>;
-  recipient_types: Array<{ id: string; label: string }>;
   supported_channels: string[];
   default_template?: string | null;
 };
@@ -38,12 +37,6 @@ export type ReminderCatalogTemplate = {
   module?: string | null;
 };
 
-/** Recipient option selected from module-provided configuration (not hardcoded). */
-export type ReminderRecipientTarget = {
-  id: string;
-  label: string;
-};
-
 /** Trigger option provided by a module configuration/API. */
 export type ModuleTriggerOption = {
   key: string;
@@ -51,18 +44,11 @@ export type ModuleTriggerOption = {
   kind: ReminderTriggerKind;
 };
 
-/** Recipient option provided by a module configuration/API. */
-export type ModuleRecipientOption = {
-  id: string;
-  label: string;
-};
-
 /** Per-module reminder form configuration (loaded dynamically). */
 export type ReminderModuleConfig = {
   module: ReminderModuleKey;
   label: string;
   triggers: ModuleTriggerOption[];
-  recipients: ModuleRecipientOption[];
   supportedChannels: string[];
   defaultTemplate?: string | null;
   supportsDate: boolean;
@@ -83,7 +69,6 @@ export type ManagedReminder = {
   offsetValue: number;
   offsetUnit: ReminderOffsetUnit;
   offsetDirection: ReminderOffsetDirection;
-  recipients: ReminderRecipientTarget[];
   channels: ReminderChannelKey[];
   templateId?: string | null;
   enabled: boolean;
@@ -127,7 +112,6 @@ export type ReminderDraft = {
   offsetValue: number;
   offsetUnit: ReminderOffsetUnit;
   offsetDirection: ReminderOffsetDirection;
-  recipients: ReminderRecipientTarget[];
   channels: ReminderChannelKey[];
   templateId: string;
   enabled: boolean;

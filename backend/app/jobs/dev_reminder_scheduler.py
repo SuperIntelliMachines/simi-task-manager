@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from app.core.database import AsyncSessionLocal
+from app.jobs.personal_reminder_jobs import process_due_personal_reminders
 from app.jobs.reminder_engine_jobs import (
     generate_reminder_instances_all,
     process_due_reminder_instances_all,
@@ -15,18 +16,23 @@ logger = logging.getLogger(__name__)
 DEV_REMINDER_INTERVAL_SECONDS = 60
 
 
-async def run_dev_reminder_cycle() -> tuple[int, int, int]:
+async def run_dev_reminder_cycle() -> tuple[int, int, int, dict[str, int]]:
     async with AsyncSessionLocal() as session:
         generated = await generate_reminder_instances_all(session)
         engine_stats = await process_due_reminder_instances_all(session)
         lead_count = await process_due_reminders_all(session)
+        personal_stats = await process_due_personal_reminders(session)
     logger.info(
-        "[ReminderScheduler] Generated %s reminder instances; processed %s engine sends; %s lead reminders",
+        "[ReminderScheduler] Generated %s reminder instances; processed %s engine sends; "
+        "%s lead reminders; personal processed=%s sent=%s failed=%s",
         generated,
         engine_stats.get("sent", 0),
         lead_count,
+        personal_stats.get("processed", 0),
+        personal_stats.get("sent", 0),
+        personal_stats.get("failed", 0),
     )
-    return generated, int(engine_stats.get("sent", 0)), lead_count
+    return generated, int(engine_stats.get("sent", 0)), lead_count, personal_stats
 
 
 async def dev_reminder_scheduler_loop(stop_event: asyncio.Event) -> None:

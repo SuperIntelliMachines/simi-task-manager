@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { useWorkbench } from "../../app/providers/workbench-provider";
-import { ReminderListFiltersBar } from "../../components/reminder-management/ReminderFilters";
 import { ReminderStatusBadge } from "../../components/reminder-management/ReminderStatusBadge";
 import { DashboardLayout, LoadingState, SectionCard } from "../../components/design-system";
 import { PlatformDialog } from "../../components/platform/platform-dialog";
@@ -15,26 +14,122 @@ import {
   PlayIcon,
   TrashIcon,
 } from "../../components/ui/ActionMenu";
+import Combobox from "../../components/ui/Combobox";
 import { Button } from "../../components/ui/button";
 import { useToast } from "../../components/ui/toast";
 import { resolveApiErrorMessage } from "../../lib/api/errors";
 import { PERMISSIONS } from "../../lib/auth/permissions";
 import {
-  formatChannels,
-  formatDate,
-  formatDateTime,
-  formatRecipients,
-  formatSchedule,
-  moduleLabel,
-  triggerKindLabel,
-} from "../../lib/reminder-management/format";
-import {
-  useDeleteManagedReminder,
-  useManagedReminders,
-  useToggleManagedReminder,
-} from "../../lib/reminder-management/hooks";
+  comboboxClassName,
+  fieldClassName,
+} from "../../lib/reminder-management/constants";
+import { formatChannels, formatDate, formatDateTime } from "../../lib/reminder-management/format";
 import { getRemindersBasePath, remindersPath } from "../../lib/reminder-management/paths";
-import type { ManagedReminder, ReminderListFilters } from "../../lib/reminder-management/types";
+import { REMINDER_CHANNEL_OPTIONS } from "../../lib/reminders/channels";
+import {
+  useDeletePersonalReminder,
+  usePersonalReminders,
+  useTogglePersonalReminder,
+} from "../../lib/personal-reminders/hooks";
+import type {
+  PersonalReminder,
+  PersonalReminderListFilters,
+  PersonalReminderStatus,
+} from "../../lib/personal-reminders/types";
+
+const STATUS_FILTER_OPTIONS: Array<{ value: PersonalReminderStatus | "all"; label: string }> = [
+  { value: "all", label: "All statuses" },
+  { value: "PENDING", label: "Pending" },
+  { value: "SENT", label: "Sent" },
+  { value: "FAILED", label: "Failed" },
+  { value: "CANCELLED", label: "Cancelled" },
+];
+
+const ACTIVE_FILTER_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "true", label: "Active" },
+  { value: "false", label: "Inactive" },
+];
+
+function PersonalReminderFiltersBar({
+  value,
+  onChange,
+}: {
+  value: PersonalReminderListFilters;
+  onChange: (next: PersonalReminderListFilters) => void;
+}) {
+  const channelItems = [
+    { value: "all", label: "All channels" },
+    ...REMINDER_CHANNEL_OPTIONS.map((option) => ({
+      value: option.key,
+      label: option.label,
+    })),
+  ];
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <label className="block">
+        <span className="sr-only">Search</span>
+        <input
+          className={fieldClassName}
+          placeholder="Search reminders…"
+          value={value.search}
+          onChange={(event) => onChange({ ...value, search: event.target.value, page: 0 })}
+        />
+      </label>
+      <Combobox
+        items={STATUS_FILTER_OPTIONS.map((option) => ({
+          value: option.value,
+          label: option.label,
+        }))}
+        value={value.status}
+        onChange={(next) =>
+          onChange({
+            ...value,
+            status: (next || "all") as PersonalReminderListFilters["status"],
+            page: 0,
+          })
+        }
+        placeholder="All statuses"
+        searchable={false}
+        className={comboboxClassName}
+      />
+      <Combobox
+        items={channelItems}
+        value={value.channel}
+        onChange={(next) =>
+          onChange({
+            ...value,
+            channel: (next || "all") as PersonalReminderListFilters["channel"],
+            page: 0,
+          })
+        }
+        placeholder="All channels"
+        searchable={false}
+        className={comboboxClassName}
+      />
+      <Combobox
+        items={ACTIVE_FILTER_OPTIONS}
+        value={value.isActive === "all" ? "all" : value.isActive ? "true" : "false"}
+        onChange={(next) => {
+          let isActive: PersonalReminderListFilters["isActive"] = "all";
+          if (next === "true") isActive = true;
+          else if (next === "false") isActive = false;
+          onChange({ ...value, isActive, page: 0 });
+        }}
+        placeholder="Active"
+        searchable={false}
+        className={comboboxClassName}
+      />
+    </div>
+  );
+}
+
+function needsDeliveryDetails(channels: string[]): boolean {
+  return channels.some((channel) =>
+    ["email", "sms", "whatsapp", "telegram"].includes(channel.toLowerCase())
+  );
+}
 
 export function ReminderListPage() {
   const { pathname } = useLocation();
@@ -48,20 +143,20 @@ export function ReminderListPage() {
   const canUpdate = hasPermission(PERMISSIONS.remindersUpdate);
   const canDelete = hasPermission(PERMISSIONS.remindersDelete);
 
-  const [filters, setFilters] = useState<ReminderListFilters>({
+  const [filters, setFilters] = useState<PersonalReminderListFilters>({
     search: "",
-    module: "all",
     status: "all",
     channel: "all",
+    isActive: "all",
     page: 0,
     pageSize: 20,
   });
-  const [viewing, setViewing] = useState<ManagedReminder | null>(null);
+  const [viewing, setViewing] = useState<PersonalReminder | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const listQuery = useManagedReminders(filters);
-  const toggleMutation = useToggleManagedReminder();
-  const deleteMutation = useDeleteManagedReminder();
+  const listQuery = usePersonalReminders(filters);
+  const toggleMutation = useTogglePersonalReminder();
+  const deleteMutation = useDeletePersonalReminder();
 
   const page = listQuery.data;
   const rows = useMemo(() => page?.items ?? [], [page?.items]);
@@ -71,24 +166,14 @@ export function ReminderListPage() {
   const canPrev = filters.page > 0;
   const canNext = (filters.page + 1) * pageSize < total;
 
-  function updateFilters(next: ReminderListFilters) {
-    const filterChanged =
-      next.search !== filters.search ||
-      next.module !== filters.module ||
-      next.status !== filters.status ||
-      next.channel !== filters.channel ||
-      next.pageSize !== filters.pageSize;
-    setFilters(filterChanged ? { ...next, page: 0 } : next);
-  }
-
-  async function handleToggle(reminder: ManagedReminder) {
+  async function handleToggle(reminder: PersonalReminder) {
     if (!canUpdate) {
       showToast("You do not have permission to update reminders.", "error");
       return;
     }
     try {
-      await toggleMutation.mutateAsync({ id: reminder.id, enabled: !reminder.enabled });
-      showToast(reminder.enabled ? "Reminder disabled." : "Reminder enabled.", "success");
+      await toggleMutation.mutateAsync({ id: reminder.id, isActive: !reminder.is_active });
+      showToast(reminder.is_active ? "Reminder disabled." : "Reminder enabled.", "success");
     } catch (error) {
       showToast(resolveApiErrorMessage(error, "Failed to update reminder"), "error");
     }
@@ -133,7 +218,7 @@ export function ReminderListPage() {
         }
       >
         <div className="mb-6">
-          <ReminderListFiltersBar value={filters} onChange={updateFilters} />
+          <PersonalReminderFiltersBar value={filters} onChange={setFilters} />
         </div>
 
         {listQuery.isLoading ? (
@@ -148,14 +233,11 @@ export function ReminderListPage() {
               emptyMessage="No reminders found. Create a reminder to get started."
               columns={[
                 { key: "name", label: "Reminder Name" },
-                { key: "module", label: "Module" },
-                { key: "trigger", label: "Trigger" },
-                { key: "schedule", label: "Schedule" },
-                { key: "recipients", label: "Recipients" },
+                { key: "description", label: "Description" },
+                { key: "scheduled", label: "Scheduled Date & Time" },
                 { key: "channels", label: "Channels" },
                 { key: "status", label: "Status" },
-                { key: "next", label: "Next Trigger" },
-                { key: "createdBy", label: "Created By" },
+                { key: "active", label: "Active" },
                 { key: "createdAt", label: "Created Date" },
                 { key: "actions", label: "Actions", className: "w-16 text-right" },
               ]}
@@ -163,24 +245,18 @@ export function ReminderListPage() {
                 id: reminder.id,
                 cells: [
                   <div key="name" className="min-w-[160px]">
-                    <div className="font-medium text-slate-900 dark:text-white">{reminder.name}</div>
+                    <div className="font-medium text-slate-900 dark:text-white">{reminder.title}</div>
                   </div>,
-                  moduleLabel(reminder.module),
-                  <div key="trigger" className="min-w-[120px]">
-                    <div>{reminder.triggerLabel || reminder.triggerKey}</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      {triggerKindLabel(reminder.triggerKind)}
-                    </div>
-                  </div>,
-                  <span key="schedule" className="whitespace-nowrap text-xs">
-                    {formatSchedule(reminder)}
+                  <span key="description" className="max-w-[220px] truncate text-slate-600 dark:text-slate-300">
+                    {reminder.description?.trim() || "—"}
                   </span>,
-                  formatRecipients(reminder),
+                  <span key="scheduled" className="whitespace-nowrap text-xs">
+                    {formatDateTime(reminder.scheduled_at)}
+                  </span>,
                   formatChannels(reminder.channels),
                   <ReminderStatusBadge key="status" status={reminder.status} />,
-                  formatDateTime(reminder.nextTriggerAt),
-                  reminder.createdBy,
-                  formatDate(reminder.createdAt),
+                  reminder.is_active ? "Yes" : "No",
+                  formatDate(reminder.created_at),
                   <div key="actions" className="flex justify-end">
                     <ActionMenu
                       items={[
@@ -200,8 +276,8 @@ export function ReminderListPage() {
                               },
                               {
                                 id: "toggle",
-                                label: reminder.enabled ? "Disable" : "Enable",
-                                icon: reminder.enabled ? <PauseIcon /> : <PlayIcon />,
+                                label: reminder.is_active ? "Disable" : "Enable",
+                                icon: reminder.is_active ? <PauseIcon /> : <PlayIcon />,
                                 onSelect: () => void handleToggle(reminder),
                               },
                             ]
@@ -257,8 +333,8 @@ export function ReminderListPage() {
       <PlatformDialog
         open={Boolean(viewing)}
         onClose={() => setViewing(null)}
-        title={viewing?.name ?? "Reminder"}
-        description="Reminder definition overview"
+        title={viewing?.title ?? "Reminder"}
+        description="Reminder details"
         size="lg"
         footer={
           <>
@@ -284,26 +360,64 @@ export function ReminderListPage() {
             <p>{viewing.description || "No description."}</p>
             <dl className="grid gap-2 sm:grid-cols-2">
               <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Module</dt>
-                <dd>{moduleLabel(viewing.module)}</dd>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Scheduled</dt>
+                <dd>{formatDateTime(viewing.scheduled_at)}</dd>
               </div>
               <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Trigger</dt>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Status</dt>
                 <dd>
-                  {viewing.triggerLabel || viewing.triggerKey} ({triggerKindLabel(viewing.triggerKind)})
+                  <ReminderStatusBadge status={viewing.status} />
                 </dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Schedule</dt>
-                <dd>{formatSchedule(viewing)}</dd>
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-wide text-slate-500">Channels</dt>
                 <dd>{formatChannels(viewing.channels)}</dd>
               </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Active</dt>
+                <dd>{viewing.is_active ? "Yes" : "No"}</dd>
+              </div>
+              {needsDeliveryDetails(viewing.channels) ? (
+                <>
+                  {viewing.channels.includes("email") ? (
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-slate-500">Email</dt>
+                      <dd>{viewing.email || "—"}</dd>
+                    </div>
+                  ) : null}
+                  {viewing.channels.includes("sms") ? (
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-slate-500">Mobile</dt>
+                      <dd>{viewing.mobile_number || "—"}</dd>
+                    </div>
+                  ) : null}
+                  {viewing.channels.includes("whatsapp") ? (
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-slate-500">WhatsApp</dt>
+                      <dd>{viewing.whatsapp_number || "—"}</dd>
+                    </div>
+                  ) : null}
+                  {viewing.channels.includes("telegram") ? (
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-slate-500">Telegram</dt>
+                      <dd>{viewing.telegram_chat_id || "—"}</dd>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
               <div className="sm:col-span-2">
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Recipients</dt>
-                <dd>{viewing.recipients.map((item) => item.label).join(", ") || "—"}</dd>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Message</dt>
+                <dd>
+                  {viewing.custom_message?.trim()
+                    ? viewing.custom_message
+                    : viewing.template_id
+                      ? `Template: ${viewing.template_id}`
+                      : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Created</dt>
+                <dd>{formatDateTime(viewing.created_at)}</dd>
               </div>
             </dl>
           </div>
@@ -314,7 +428,7 @@ export function ReminderListPage() {
         open={Boolean(deletingId)}
         onClose={() => setDeletingId(null)}
         title="Delete reminder?"
-        description="This permanently deletes the reminder definition."
+        description="This permanently deletes the reminder."
         footer={
           <>
             <Button variant="outline" onClick={() => setDeletingId(null)}>
@@ -326,9 +440,7 @@ export function ReminderListPage() {
           </>
         }
       >
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          This action cannot be undone.
-        </p>
+        <p className="text-sm text-slate-600 dark:text-slate-300">This action cannot be undone.</p>
       </PlatformDialog>
     </DashboardLayout>
   );

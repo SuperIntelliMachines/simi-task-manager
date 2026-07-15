@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.jobs import celery_app
+from app.jobs.personal_reminder_jobs import process_due_personal_reminders
 from app.jobs.reminder_engine_jobs import (
     generate_reminder_instances,
     generate_reminder_instances_all,
@@ -26,6 +27,11 @@ from app.jobs.renewal_escalation_jobs import (
 async def _run_with_session(coro):
     async with AsyncSessionLocal() as session:  # type: AsyncSession
         return await coro(session)
+
+
+@celery_app.task(name="process_due_personal_reminders")
+def process_due_personal_reminders_task() -> dict[str, int]:
+    return asyncio.run(_run_with_session(process_due_personal_reminders))
 
 
 @celery_app.task(name="process_due_reminders")

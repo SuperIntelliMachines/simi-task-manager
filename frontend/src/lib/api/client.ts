@@ -42,7 +42,6 @@ export type GeneralReminderUpsertDto = {
   description?: string | null;
   trigger: { type: string; key: string };
   schedule: { offset_value: number; offset_unit: string; direction: string };
-  recipient: { type: string; value: unknown[] };
   channels: string[];
   template_key?: string | null;
   is_active: boolean;
@@ -54,6 +53,74 @@ export type GeneralReminderDefinitionDto = GeneralReminderUpsertDto & {
   created_by: number | null;
   created_at: string;
   updated_at: string;
+};
+
+/** Personal reminder DTO (independent of Reminder Definitions). */
+export type PersonalReminderDto = {
+  id: string;
+  organization_id: number;
+  created_by: number;
+  title: string;
+  description: string | null;
+  scheduled_at: string;
+  channels: string[];
+  email: string | null;
+  mobile_number: string | null;
+  whatsapp_number: string | null;
+  telegram_chat_id: string | null;
+  template_id: string | null;
+  custom_message: string | null;
+  status: string;
+  sent_at: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PersonalReminderUpsertDto = {
+  title: string;
+  description?: string | null;
+  scheduled_at: string;
+  channels: string[];
+  email?: string | null;
+  mobile_number?: string | null;
+  whatsapp_number?: string | null;
+  telegram_chat_id?: string | null;
+  template_id?: string | null;
+  custom_message?: string | null;
+  status?: string;
+  is_active?: boolean;
+};
+
+export type ReminderTemplateDto = {
+  id: string;
+  organization_id: number;
+  created_by: number | null;
+  name: string;
+  channel: string;
+  subject: string | null;
+  title: string | null;
+  body: string;
+  variables: string[];
+  is_active: boolean;
+  whatsapp_template_name: string | null;
+  approval_status: string | null;
+  meta_template_id: string | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ReminderTemplateUpsertDto = {
+  name: string;
+  channel: string;
+  subject?: string | null;
+  title?: string | null;
+  body: string;
+  variables?: string[];
+  is_active?: boolean;
+  whatsapp_template_name?: string | null;
 };
 
 const API_BASE = "/api/v1";
@@ -548,6 +615,96 @@ export const apiClient = {
 
   async deleteGeneralReminder(id: string) {
     return await requestJson<void>(`/general-reminders/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  async listPersonalReminders(params?: {
+    status?: string;
+    is_active?: boolean;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    return await requestJson<{
+      items: PersonalReminderDto[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>("/personal-reminders", undefined, {
+      status: params?.status,
+      is_active: params?.is_active,
+      q: params?.q,
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+  },
+
+  async getPersonalReminder(id: string) {
+    return await requestJson<PersonalReminderDto>(`/personal-reminders/${encodeURIComponent(id)}`);
+  },
+
+  async createPersonalReminder(input: PersonalReminderUpsertDto) {
+    return await requestJson<PersonalReminderDto>("/personal-reminders", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updatePersonalReminder(id: string, input: Partial<PersonalReminderUpsertDto>) {
+    return await requestJson<PersonalReminderDto>(`/personal-reminders/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async deletePersonalReminder(id: string) {
+    return await requestJson<void>(`/personal-reminders/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  async listReminderTemplates(params?: {
+    channel?: string;
+    is_active?: boolean;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    return await requestJson<{
+      items: ReminderTemplateDto[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>("/reminder-templates", undefined, {
+      channel: params?.channel,
+      is_active: params?.is_active,
+      q: params?.q,
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+  },
+
+  async getReminderTemplate(id: string) {
+    return await requestJson<ReminderTemplateDto>(`/reminder-templates/${encodeURIComponent(id)}`);
+  },
+
+  async createReminderTemplate(input: ReminderTemplateUpsertDto) {
+    return await requestJson<ReminderTemplateDto>("/reminder-templates", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateReminderTemplate(id: string, input: Partial<ReminderTemplateUpsertDto>) {
+    return await requestJson<ReminderTemplateDto>(`/reminder-templates/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async deleteReminderTemplate(id: string) {
+    return await requestJson<void>(`/reminder-templates/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
   },

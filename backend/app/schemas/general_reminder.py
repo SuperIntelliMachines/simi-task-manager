@@ -6,7 +6,7 @@ Validates structure only — no module-specific allowlists (Insurance, Claims, e
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -65,35 +65,12 @@ class SchedulePayload(BaseModel):
         return normalized
 
 
-class RecipientPayload(BaseModel):
-    type: str = Field(..., min_length=1, max_length=50)
-    value: list[Any] = Field(default_factory=list)
-
-    @field_validator("type")
-    @classmethod
-    def validate_recipient_type(cls, value: str) -> str:
-        cleaned = (value or "").strip()
-        if not cleaned:
-            raise ValueError("recipient.type is required")
-        return cleaned
-
-    @field_validator("value", mode="before")
-    @classmethod
-    def coerce_value_list(cls, value: Any) -> list[Any]:
-        if value is None:
-            return []
-        if not isinstance(value, list):
-            raise ValueError("recipient.value must be a list")
-        return value
-
-
 class GeneralReminderCreateRequest(BaseModel):
     module_key: str = Field(..., min_length=1, max_length=50)
     reminder_name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     trigger: TriggerPayload
     schedule: SchedulePayload
-    recipient: RecipientPayload
     channels: list[str] = Field(..., min_length=1)
     template_key: str | None = Field(default=None, max_length=100)
     is_active: bool = True
@@ -149,7 +126,6 @@ class GeneralReminderUpdateRequest(BaseModel):
     description: str | None = None
     trigger: TriggerPayload | None = None
     schedule: SchedulePayload | None = None
-    recipient: RecipientPayload | None = None
     channels: list[str] | None = None
     template_key: str | None = Field(default=None, max_length=100)
     is_active: bool | None = None
@@ -215,7 +191,6 @@ class GeneralReminderResponse(BaseModel):
     description: str | None
     trigger: TriggerPayload
     schedule: SchedulePayload
-    recipient: RecipientPayload
     channels: list[str]
     template_key: str | None
     is_active: bool

@@ -82,7 +82,6 @@ export function emptyReminderDraft(defaults?: Partial<ReminderDraft>): ReminderD
     offsetValue: 30,
     offsetUnit: "days",
     offsetDirection: "before",
-    recipients: [],
     channels: ["in_app"],
     templateId: "",
     enabled: true,

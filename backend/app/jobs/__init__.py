@@ -23,6 +23,10 @@ celery_app.conf.beat_schedule = {
         "task": "process_due_reminders",
         "schedule": crontab(minute="*/5"),
     },
+    "process-due-personal-reminders-every-5-minutes": {
+        "task": "process_due_personal_reminders",
+        "schedule": crontab(minute="*/5"),
+    },
 }
 celery_app.conf.timezone = "UTC"
 

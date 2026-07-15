@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.jobs.policy_reminder_generator import repair_personalized_policy_reminder_schedules_all
+from app.jobs.personal_reminder_jobs import process_due_personal_reminders
 from app.jobs.reminder_engine_jobs import (
     generate_reminder_instances_all,
     process_due_reminder_instances_all,
@@ -15,6 +16,7 @@ from app.jobs.reminder_engine_jobs import (
 )
 from app.jobs.reminder_jobs import process_due_reminders_all
 from app.jobs.renewal_escalation_jobs import process_renewal_escalations_all
+from app.schemas.reminder import ReminderProcessResponse
 from app.schemas.scheduler_jobs import (
     RenewalEscalationJobResponse,
     RepairPolicyRemindersResponse,
@@ -42,6 +44,20 @@ async def process_lead_reminders(
 ) -> SchedulerJobCountResponse:
     processed = await process_due_reminders_all(session)
     return SchedulerJobCountResponse(processed=processed)
+
+
+@router.post(
+    "/process-personal-reminders",
+    response_model=ReminderProcessResponse,
+    summary="Process due personal reminders",
+    description="Send due PENDING personal reminders via ChannelService.",
+)
+async def process_personal_reminders_job(
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_scheduler_secret),
+) -> ReminderProcessResponse:
+    stats = await process_due_personal_reminders(session)
+    return ReminderProcessResponse(**stats)
 
 
 @router.post(

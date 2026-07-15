@@ -49,8 +49,8 @@ class ReminderDefinitionService:
             offset_value=payload.schedule.offset_value,
             offset_unit=payload.schedule.offset_unit,
             offset_direction=payload.schedule.direction,
-            recipient_type=payload.recipient.type,
-            recipient_value=list(payload.recipient.value),
+            recipient_type="resolver",
+            recipient_value=[],
             channels=list(payload.channels),
             template_key=payload.template_key,
             is_active=payload.is_active,
@@ -126,9 +126,6 @@ class ReminderDefinitionService:
             row.offset_value = data["schedule"]["offset_value"]
             row.offset_unit = data["schedule"]["offset_unit"]
             row.offset_direction = data["schedule"]["direction"]
-        if "recipient" in data and data["recipient"] is not None:
-            row.recipient_type = data["recipient"]["type"]
-            row.recipient_value = list(data["recipient"]["value"])
         if "channels" in data and data["channels"] is not None:
             row.channels = list(data["channels"])
         if "template_key" in data:

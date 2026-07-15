@@ -14,7 +14,6 @@ import type {
   ReminderListFilters,
   ReminderOffsetDirection,
   ReminderOffsetUnit,
-  ReminderRecipientTarget,
   ReminderTriggerKind,
 } from "../lib/reminder-management/types";
 
@@ -24,18 +23,6 @@ export type GeneralReminderListResult = {
   limit: number;
   offset: number;
 };
-
-function parseRecipients(value: unknown[]): ReminderRecipientTarget[] {
-  return value.map((item) => {
-    if (item && typeof item === "object" && "id" in item) {
-      const row = item as { id: unknown; label?: unknown };
-      const id = String(row.id);
-      return { id, label: row.label != null ? String(row.label) : id };
-    }
-    const id = String(item);
-    return { id, label: id };
-  });
-}
 
 function isOffsetUnit(value: string): value is ReminderOffsetUnit {
   return ["minutes", "hours", "days", "weeks", "months"].includes(value);
@@ -53,7 +40,6 @@ export function mapDefinitionToManaged(row: GeneralReminderDefinitionDto): Manag
   const triggerKind = isTriggerKind(row.trigger.type) ? row.trigger.type : "date";
   const offsetUnit = isOffsetUnit(row.schedule.offset_unit) ? row.schedule.offset_unit : "days";
   const offsetDirection = isDirection(row.schedule.direction) ? row.schedule.direction : "before";
-  const recipients = parseRecipients(row.recipient?.value ?? []);
   const enabled = Boolean(row.is_active);
 
   return {
@@ -67,7 +53,6 @@ export function mapDefinitionToManaged(row: GeneralReminderDefinitionDto): Manag
     offsetValue: row.schedule.offset_value,
     offsetUnit,
     offsetDirection,
-    recipients,
     channels: (row.channels ?? []) as ReminderChannelKey[],
     templateId: row.template_key ?? null,
     enabled,
@@ -80,7 +65,6 @@ export function mapDefinitionToManaged(row: GeneralReminderDefinitionDto): Manag
 }
 
 export function draftToUpsertDto(draft: ReminderDraft): GeneralReminderUpsertDto {
-  const recipients = draft.recipients;
   return {
     module_key: draft.module.trim(),
     reminder_name: draft.name.trim(),
@@ -93,10 +77,6 @@ export function draftToUpsertDto(draft: ReminderDraft): GeneralReminderUpsertDto
       offset_value: draft.offsetValue,
       offset_unit: draft.offsetUnit,
       direction: draft.offsetDirection,
-    },
-    recipient: {
-      type: recipients.length === 1 ? recipients[0].id : "multi",
-      value: recipients.map((item) => ({ id: item.id, label: item.label })),
     },
     channels: [...draft.channels],
     template_key: draft.templateId?.trim() || null,
