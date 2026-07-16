@@ -1,5 +1,6 @@
 import { apiClient } from "../api/client";
 import type {
+  ReminderTemplateDefinitionListResponse,
   ReminderTemplateDraft,
   ReminderTemplateListFilters,
   ReminderTemplateListResponse,
@@ -122,6 +123,14 @@ export const reminderTemplateApi = {
     filters?: Partial<ReminderTemplateListFilters> & { limit?: number; offset?: number }
   ): Promise<ReminderTemplateListResponse> {
     return apiClient.listReminderTemplates(buildListParams(filters));
+  },
+
+  async listDefinitions(params?: {
+    isActive?: boolean;
+  }): Promise<ReminderTemplateDefinitionListResponse> {
+    return apiClient.listReminderTemplateDefinitions({
+      is_active: params?.isActive,
+    });
   },
 
   async get(id: string): Promise<ReminderTemplateRecord> {

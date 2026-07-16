@@ -92,6 +92,23 @@ export default function Combobox({
     onChange(v);
   }
 
+  function openList() {
+    setOpen(true);
+    // Keep caret ready for search; do not rely solely on focus (already-focused inputs
+    // will not re-fire onFocus after a selection).
+    if (searchable) {
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }
+
+  function toggleList() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    openList();
+  }
+
   return (
     <div ref={containerRef} className={`ui-select ${className}`}>
       <input
@@ -103,7 +120,12 @@ export default function Combobox({
         aria-invalid={ariaInvalid}
         className="input"
         value={open ? query : (selectedLabel || query)}
-        onChange={(e) => { if (searchable) { setQuery(e.target.value); setOpen(true); } }}
+        onChange={(e) => {
+          if (searchable) {
+            setQuery(e.target.value);
+            setOpen(true);
+          }
+        }}
         readOnly={!searchable}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
@@ -112,9 +134,28 @@ export default function Combobox({
           setTimeout(() => setOpen(false), 120);
           onBlur?.();
         }}
-        onClick={() => { if (!searchable) setOpen((s) => !s); }}
+        onClick={() => {
+          // After a selection the input often keeps focus, so onFocus does not fire again.
+          // Always reopen when closed; non-searchable also toggles closed→open via click.
+          if (!open) {
+            openList();
+          } else if (!searchable) {
+            setOpen(false);
+          }
+        }}
       />
-      <span className="ui-select-arrow">▾</span>
+      <button
+        type="button"
+        className="ui-select-arrow"
+        tabIndex={-1}
+        aria-label="Toggle options"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          toggleList();
+        }}
+      >
+        ▾
+      </button>
 
       {open && coords ? createPortal(
         <ul id="combobox-list" role="listbox" ref={listRef} className="combobox-list" style={{ position: 'absolute', top: coords.top, left: coords.left, minWidth: coords.width, zIndex: 9999 }}>

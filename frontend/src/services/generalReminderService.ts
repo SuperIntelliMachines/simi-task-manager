@@ -14,6 +14,8 @@ import type {
   ReminderListFilters,
   ReminderOffsetDirection,
   ReminderOffsetUnit,
+  ReminderRecurrenceUnit,
+  ReminderStopCondition,
   ReminderTriggerKind,
 } from "../lib/reminder-management/types";
 
@@ -36,11 +38,39 @@ function isTriggerKind(value: string): value is ReminderTriggerKind {
   return value === "date" || value === "workflow";
 }
 
+function isRecurrenceUnit(value: string): value is ReminderRecurrenceUnit {
+  return ["hours", "days", "weeks", "months"].includes(value);
+}
+
+function isStopCondition(value: string): value is ReminderStopCondition {
+  return [
+    "entity_ineligible",
+    "workflow_status_changed",
+    "end_date_reached",
+    "max_attempts_reached",
+    "never",
+  ].includes(value);
+}
+
 export function mapDefinitionToManaged(row: GeneralReminderDefinitionDto): ManagedReminder {
   const triggerKind = isTriggerKind(row.trigger.type) ? row.trigger.type : "date";
   const offsetUnit = isOffsetUnit(row.schedule.offset_unit) ? row.schedule.offset_unit : "days";
   const offsetDirection = isDirection(row.schedule.direction) ? row.schedule.direction : "before";
   const enabled = Boolean(row.is_active);
+  const recurrence = row.recurrence ?? {
+    repeat_enabled: false,
+    repeat_frequency_value: null,
+    repeat_frequency_unit: null,
+    max_attempts: null,
+    stop_condition: "entity_ineligible",
+    stop_condition_config: null,
+  };
+  const repeatUnit = recurrence.repeat_frequency_unit;
+  const repeatFrequencyUnit = repeatUnit && isRecurrenceUnit(repeatUnit) ? repeatUnit : "hours";
+  const stopCondition =
+    recurrence.stop_condition && isStopCondition(recurrence.stop_condition)
+      ? recurrence.stop_condition
+      : "entity_ineligible";
 
   return {
     id: row.id,
@@ -53,6 +83,11 @@ export function mapDefinitionToManaged(row: GeneralReminderDefinitionDto): Manag
     offsetValue: row.schedule.offset_value,
     offsetUnit,
     offsetDirection,
+    repeatEnabled: Boolean(recurrence.repeat_enabled),
+    repeatFrequencyValue: recurrence.repeat_frequency_value ?? 24,
+    repeatFrequencyUnit,
+    maxAttempts: recurrence.max_attempts ?? null,
+    stopCondition,
     channels: (row.channels ?? []) as ReminderChannelKey[],
     templateId: row.template_key ?? null,
     enabled,
@@ -77,6 +112,13 @@ export function draftToUpsertDto(draft: ReminderDraft): GeneralReminderUpsertDto
       offset_value: draft.offsetValue,
       offset_unit: draft.offsetUnit,
       direction: draft.offsetDirection,
+    },
+    recurrence: {
+      repeat_enabled: draft.repeatEnabled,
+      repeat_frequency_value: draft.repeatEnabled ? draft.repeatFrequencyValue : null,
+      repeat_frequency_unit: draft.repeatEnabled ? draft.repeatFrequencyUnit : null,
+      max_attempts: draft.maxAttempts,
+      stop_condition: draft.stopCondition,
     },
     channels: [...draft.channels],
     template_key: draft.templateId?.trim() || null,

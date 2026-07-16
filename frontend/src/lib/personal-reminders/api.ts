@@ -2,6 +2,7 @@
  * Personal Reminder API client — maps to /api/v1/personal-reminders.
  */
 import { apiClient } from "../api/client";
+import { validateReminderRecipients } from "../reminder-management/recipient-fields";
 import type {
   PersonalReminder,
   PersonalReminderDraft,
@@ -23,9 +24,20 @@ export function emptyPersonalReminderDraft(
 
   return {
     title: "",
-    description: "",
     reminderDate: date,
     reminderTime: time,
+    triggerType: "one_time",
+    moduleKey: "",
+    triggerKey: "",
+    triggerKind: "date",
+    offsetValue: 24,
+    offsetUnit: "hours",
+    offsetDirection: "after",
+    repeatEnabled: false,
+    repeatFrequencyValue: 24,
+    repeatFrequencyUnit: "hours",
+    maxAttempts: null,
+    stopCondition: "entity_ineligible",
     channels: ["in_app"],
     email: "",
     mobileNumber: "",
@@ -54,13 +66,12 @@ export function reminderToDraft(reminder: PersonalReminder): PersonalReminderDra
 
   return emptyPersonalReminderDraft({
     title: reminder.title,
-    description: reminder.description ?? "",
     reminderDate,
     reminderTime,
     channels: [...(reminder.channels ?? [])],
     email: reminder.email ?? "",
-    mobileNumber: reminder.mobile_number ?? "",
-    whatsappNumber: reminder.whatsapp_number ?? "",
+    mobileNumber: reminder.mobile_number || reminder.whatsapp_number || "",
+    whatsappNumber: reminder.whatsapp_number || reminder.mobile_number || "",
     telegramChatId: reminder.telegram_chat_id ?? "",
     templateId: reminder.template_id ?? "",
     customMessage: reminder.custom_message ?? "",
@@ -84,14 +95,18 @@ export function draftToUpsert(draft: PersonalReminderDraft): PersonalReminderUps
   const templateId = isUuid(rawTemplateId) ? rawTemplateId : null;
   const customMessage = draft.customMessage.trim() || null;
 
+  // Shared phone UI for SMS + WhatsApp — persist into both API fields when selected.
+  const sharedPhone = (draft.mobileNumber.trim() || draft.whatsappNumber.trim() || "") || null;
+
+  // One-time personal reminders only persist absolute scheduled_at.
+  // Relative fields are persisted via reminder_configs (Generic Reminder Engine).
   return {
     title: draft.title.trim(),
-    description: draft.description.trim() || null,
     scheduled_at: combineDateAndTime(draft.reminderDate, draft.reminderTime),
     channels,
     email: hasEmail ? draft.email.trim() || null : null,
-    mobile_number: hasSms ? draft.mobileNumber.trim() || null : null,
-    whatsapp_number: hasWhatsapp ? draft.whatsappNumber.trim() || null : null,
+    mobile_number: hasSms ? sharedPhone : null,
+    whatsapp_number: hasWhatsapp ? sharedPhone : null,
     telegram_chat_id: hasTelegram ? draft.telegramChatId.trim() || null : null,
     template_id: templateId,
     custom_message: customMessage,
@@ -108,23 +123,36 @@ function isUuid(value: string): boolean {
 
 export function validatePersonalReminderDraft(draft: PersonalReminderDraft): string | null {
   if (!draft.title.trim()) return "Reminder name is required.";
-  if (!draft.reminderDate) return "Reminder date is required.";
-  if (!draft.reminderTime) return "Reminder time is required.";
   if (draft.channels.length === 0) return "Select at least one channel.";
 
-  const channels = new Set(draft.channels.map((c) => c.toLowerCase()));
-  if (channels.has("email") && !draft.email.trim()) {
-    return "Email address is required when Email is selected.";
+  if (draft.triggerType === "one_time") {
+    if (!draft.reminderDate) return "Reminder date is required.";
+    if (!draft.reminderTime) return "Reminder time is required.";
+  } else {
+    if (!draft.moduleKey.trim()) return "Module is required for relative reminders.";
+    if (!draft.triggerKey.trim()) return "Trigger is required for relative reminders.";
+    if (!Number.isFinite(draft.offsetValue) || draft.offsetValue < 0) {
+      return "Offset value must be zero or a positive number.";
+    }
+    if (draft.repeatEnabled) {
+      if (!Number.isFinite(draft.repeatFrequencyValue) || draft.repeatFrequencyValue < 1) {
+        return "Repeat frequency must be at least 1 when recurring is enabled.";
+      }
+      if (draft.maxAttempts != null && draft.maxAttempts < 1) {
+        return "Maximum attempts must be at least 1 when provided.";
+      }
+      if (!draft.stopCondition.trim()) return "Stop condition is required when recurring is enabled.";
+    }
   }
-  if (channels.has("sms") && !draft.mobileNumber.trim()) {
-    return "Mobile number is required when SMS is selected.";
-  }
-  if (channels.has("whatsapp") && !draft.whatsappNumber.trim()) {
-    return "WhatsApp number is required when WhatsApp is selected.";
-  }
-  if (channels.has("telegram") && !draft.telegramChatId.trim()) {
-    return "Telegram chat ID is required when Telegram is selected.";
-  }
+
+  const sharedPhone = draft.mobileNumber.trim() || draft.whatsappNumber.trim();
+  const recipientError = validateReminderRecipients(draft.channels, {
+    phone: sharedPhone,
+    email: draft.email,
+    telegramChatId: draft.telegramChatId,
+  });
+  if (recipientError) return recipientError;
+
   return null;
 }
 

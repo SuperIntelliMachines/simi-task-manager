@@ -27,6 +27,7 @@ class MockAdapter(ChannelAdapter):
         recipient,
         text,
         template_name=None,
+        template_language=None,
         template_variables=None,
     ):
         self.sent.append(
@@ -34,6 +35,7 @@ class MockAdapter(ChannelAdapter):
                 "recipient": recipient,
                 "text": text,
                 "template_name": template_name,
+                "template_language": template_language,
                 "template_variables": template_variables,
                 "connection_settings": connection_settings,
             }

@@ -10,7 +10,14 @@ export type ReminderTriggerKind = "date" | "workflow";
 
 export type ReminderOffsetUnit = "minutes" | "hours" | "days" | "weeks" | "months";
 
-export type ReminderOffsetDirection = "before" | "after";
+export type ReminderStopCondition =
+  | "entity_ineligible"
+  | "workflow_status_changed"
+  | "end_date_reached"
+  | "max_attempts_reached"
+  | "never";
+
+export type ReminderRecurrenceUnit = "hours" | "days" | "weeks" | "months";
 
 export type ReminderHistoryStatus = "sent" | "failed" | "pending" | "skipped";
 
@@ -26,6 +33,7 @@ export type ReminderModuleSchema = {
   workflow_events: Array<{ key: string; label: string }>;
   supported_channels: string[];
   default_template?: string | null;
+  stop_conditions?: Array<{ id: string; label: string }>;
 };
 
 export type ReminderCatalogTemplate = {
@@ -51,6 +59,7 @@ export type ReminderModuleConfig = {
   triggers: ModuleTriggerOption[];
   supportedChannels: string[];
   defaultTemplate?: string | null;
+  stopConditions?: Array<{ id: string; label: string }>;
   supportsDate: boolean;
   supportsWorkflow: boolean;
 };
@@ -69,6 +78,11 @@ export type ManagedReminder = {
   offsetValue: number;
   offsetUnit: ReminderOffsetUnit;
   offsetDirection: ReminderOffsetDirection;
+  repeatEnabled: boolean;
+  repeatFrequencyValue: number;
+  repeatFrequencyUnit: ReminderRecurrenceUnit;
+  maxAttempts: number | null;
+  stopCondition: ReminderStopCondition;
   channels: ReminderChannelKey[];
   templateId?: string | null;
   enabled: boolean;
@@ -112,6 +126,11 @@ export type ReminderDraft = {
   offsetValue: number;
   offsetUnit: ReminderOffsetUnit;
   offsetDirection: ReminderOffsetDirection;
+  repeatEnabled: boolean;
+  repeatFrequencyValue: number;
+  repeatFrequencyUnit: ReminderRecurrenceUnit;
+  maxAttempts: number | null;
+  stopCondition: ReminderStopCondition;
   channels: ReminderChannelKey[];
   templateId: string;
   enabled: boolean;
@@ -133,4 +152,8 @@ export type ReminderHistoryFilters = {
   channel: ReminderChannelKey | "all";
   dateFrom: string;
   dateTo: string;
+  search: string;
+  /** 0-based page index for UI pagination. */
+  page: number;
+  pageSize: number;
 };

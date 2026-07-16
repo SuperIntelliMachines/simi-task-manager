@@ -17,6 +17,7 @@ from app.core.permissions import (
 from app.models.reminder_template import ReminderTemplate
 from app.schemas.reminder_template import (
     ReminderTemplateCreate,
+    ReminderTemplateDefinitionListResponse,
     ReminderTemplateListResponse,
     ReminderTemplateResponse,
     ReminderTemplateUpdate,
@@ -102,6 +103,25 @@ async def list_reminder_templates(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/definitions",
+    response_model=ReminderTemplateDefinitionListResponse,
+    dependencies=[Depends(PermissionChecker(TEMPLATES_VIEW))],
+)
+async def list_reminder_template_definitions(
+    is_active: bool | None = Query(default=True),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> ReminderTemplateDefinitionListResponse:
+    """Logical reminder definitions grouped by name (channel variants collapsed)."""
+    service = ReminderTemplateService(session)
+    items = await service.list_definitions(
+        organization_id=current_user.organization_id,
+        is_active=is_active,
+    )
+    return ReminderTemplateDefinitionListResponse(items=items, total=len(items))
 
 
 @router.get(

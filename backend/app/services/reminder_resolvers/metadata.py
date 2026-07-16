@@ -35,6 +35,38 @@ class ReminderRecipientType:
 
 
 @dataclass(frozen=True)
+class ReminderStopConditionOption:
+    """A generic stop condition administrators can select."""
+
+    id: str
+    label: str
+
+
+STANDARD_STOP_CONDITIONS: tuple[ReminderStopConditionOption, ...] = (
+    ReminderStopConditionOption(
+        id="entity_ineligible",
+        label="Entity No Longer Matches Trigger",
+    ),
+    ReminderStopConditionOption(
+        id="workflow_status_changed",
+        label="Workflow Status Changes",
+    ),
+    ReminderStopConditionOption(
+        id="end_date_reached",
+        label="End Date Reached",
+    ),
+    ReminderStopConditionOption(
+        id="max_attempts_reached",
+        label="Maximum Attempts Reached",
+    ),
+    ReminderStopConditionOption(
+        id="never",
+        label="Never (continue until manually disabled)",
+    ),
+)
+
+
+@dataclass(frozen=True)
 class ReminderModuleMetadata:
     """Full capability catalog for one registered reminder module."""
 
@@ -45,6 +77,7 @@ class ReminderModuleMetadata:
     recipient_types: tuple[ReminderRecipientType, ...] = ()
     supported_channels: tuple[str, ...] = ()
     default_template: str | None = None
+    stop_conditions: tuple[ReminderStopConditionOption, ...] = STANDARD_STOP_CONDITIONS
 
     @property
     def supports_date(self) -> bool:

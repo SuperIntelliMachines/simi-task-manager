@@ -24,6 +24,7 @@ from app.schemas.general_reminder import (
     GeneralReminderListResponse,
     GeneralReminderResponse,
     GeneralReminderUpdateRequest,
+    RecurrencePayload,
     SchedulePayload,
     TriggerPayload,
 )
@@ -48,6 +49,14 @@ def _serialize(row: ReminderDefinition) -> GeneralReminderResponse:
             offset_value=int(row.offset_value),
             offset_unit=row.offset_unit,
             direction=row.offset_direction,
+        ),
+        recurrence=RecurrencePayload(
+            repeat_enabled=bool(getattr(row, "repeat_enabled", False)),
+            repeat_frequency_value=getattr(row, "repeat_frequency_value", None),
+            repeat_frequency_unit=getattr(row, "repeat_frequency_unit", None),
+            max_attempts=getattr(row, "max_attempts", None),
+            stop_condition=getattr(row, "stop_condition", "entity_ineligible"),
+            stop_condition_config=getattr(row, "stop_condition_config", None),
         ),
         channels=list(row.channels or []),
         template_key=row.template_key,

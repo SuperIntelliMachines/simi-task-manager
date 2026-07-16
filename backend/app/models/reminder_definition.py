@@ -27,7 +27,12 @@ from sqlalchemy import (
 )
 
 from app.core.database import Base
-from app.core.enums import ReminderAnchorType, ReminderOffsetDirection
+from app.core.enums import (
+    DEFAULT_REMINDER_STOP_CONDITION,
+    ReminderAnchorType,
+    ReminderOffsetDirection,
+    ReminderStopCondition,
+)
 
 
 class ReminderDefinition(Base):
@@ -42,6 +47,14 @@ class ReminderDefinition(Base):
         CheckConstraint(
             f"offset_direction IN ('{ReminderOffsetDirection.BEFORE.value}', '{ReminderOffsetDirection.AFTER.value}')",
             name="ck_reminder_definitions_offset_direction",
+        ),
+        CheckConstraint(
+            f"stop_condition IN ('{ReminderStopCondition.NEVER.value}', "
+            f"'{ReminderStopCondition.ENTITY_INELIGIBLE.value}', "
+            f"'{ReminderStopCondition.WORKFLOW_STATUS_CHANGED.value}', "
+            f"'{ReminderStopCondition.END_DATE_REACHED.value}', "
+            f"'{ReminderStopCondition.MAX_ATTEMPTS_REACHED.value}')",
+            name="ck_reminder_definitions_stop_condition",
         ),
         Index("ix_reminder_definitions_organization_id", "organization_id"),
         Index("ix_reminder_definitions_module_key", "module_key"),
@@ -77,6 +90,17 @@ class ReminderDefinition(Base):
         default=ReminderOffsetDirection.BEFORE.value,
         server_default=ReminderOffsetDirection.BEFORE.value,
     )
+    repeat_enabled = Column(Boolean, nullable=False, default=False, server_default="0")
+    repeat_frequency_value = Column(Integer, nullable=True)
+    repeat_frequency_unit = Column(String(20), nullable=True)
+    max_attempts = Column(Integer, nullable=True)
+    stop_condition = Column(
+        String(50),
+        nullable=False,
+        default=DEFAULT_REMINDER_STOP_CONDITION,
+        server_default=DEFAULT_REMINDER_STOP_CONDITION,
+    )
+    stop_condition_config = Column(JSON, nullable=True)
     recipient_type = Column(String(50), nullable=False)
     recipient_value = Column(JSON, nullable=False, default=list, server_default="[]")
     channels = Column(JSON, nullable=False, default=list, server_default="[]")

@@ -10,7 +10,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.channels.channel_keys import SUPPORTED_REMINDER_CHANNELS
-from app.core.enums import DEFAULT_REMINDER_ANCHOR_KEY, ReminderAnchorType
+from app.core.enums import (
+    DEFAULT_REMINDER_ANCHOR_KEY,
+    ReminderAnchorType,
+    ReminderStopCondition,
+)
 from app.models.reminder_config import ReminderConfig
 from app.services.reminder_resolvers.metadata import (
     ReminderModuleMetadata,
@@ -245,6 +249,63 @@ class ReminderEntityResolver(ABC):
     def should_cancel_instance(self, entity: ReminderEntitySnapshot) -> bool:
         """Return True when a pending instance should be canceled without sending."""
         return False
+
+    def should_stop_reminder(
+        self,
+        entity: ReminderEntitySnapshot,
+        config: ReminderConfig,
+        *,
+        sent_count: int,
+        now: datetime,
+    ) -> bool:
+        """
+        Return True when the configured stop condition is satisfied.
+
+        Engine-level checks (config inactive, max_attempts) are handled separately.
+        """
+        stop = (
+            getattr(config, "stop_condition", None) or ReminderStopCondition.ENTITY_INELIGIBLE.value
+        ).strip().lower()
+        if stop == ReminderStopCondition.NEVER.value:
+            return False
+        if stop == ReminderStopCondition.MAX_ATTEMPTS_REACHED.value:
+            max_attempts = getattr(config, "max_attempts", None)
+            return max_attempts is not None and int(sent_count) >= int(max_attempts)
+        if stop == ReminderStopCondition.WORKFLOW_STATUS_CHANGED.value:
+            return self.should_cancel_instance(entity)
+        if stop == ReminderStopCondition.END_DATE_REACHED.value:
+            return self._is_end_date_reached(entity, config, now=now)
+        if stop == ReminderStopCondition.ENTITY_INELIGIBLE.value:
+            if self.should_cancel_instance(entity):
+                return True
+            return not self.is_eligible(entity, configs=[config])
+        return False
+
+    def _is_end_date_reached(
+        self,
+        entity: ReminderEntitySnapshot,
+        config: ReminderConfig,
+        *,
+        now: datetime,
+    ) -> bool:
+        raw_config = getattr(config, "stop_condition_config", None) or {}
+        anchor_key = str(
+            raw_config.get("end_date_anchor_key")
+            or raw_config.get("anchor_key")
+            or getattr(config, "anchor_key", DEFAULT_REMINDER_ANCHOR_KEY)
+            or DEFAULT_REMINDER_ANCHOR_KEY
+        ).strip()
+        anchor_type = str(
+            raw_config.get("anchor_type")
+            or getattr(config, "anchor_type", ReminderAnchorType.DATE.value)
+            or ReminderAnchorType.DATE.value
+        ).strip()
+        end_at = normalize_to_utc_naive(
+            self.resolve_anchor(entity, anchor_type=anchor_type, anchor_key=anchor_key)
+        )
+        if end_at is None:
+            return False
+        return normalize_to_utc_naive(now) >= end_at
 
     def is_eligible(
         self,

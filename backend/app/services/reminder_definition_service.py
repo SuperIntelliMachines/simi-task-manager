@@ -49,6 +49,12 @@ class ReminderDefinitionService:
             offset_value=payload.schedule.offset_value,
             offset_unit=payload.schedule.offset_unit,
             offset_direction=payload.schedule.direction,
+            repeat_enabled=payload.recurrence.repeat_enabled,
+            repeat_frequency_value=payload.recurrence.repeat_frequency_value,
+            repeat_frequency_unit=payload.recurrence.repeat_frequency_unit,
+            max_attempts=payload.recurrence.max_attempts,
+            stop_condition=payload.recurrence.stop_condition,
+            stop_condition_config=payload.recurrence.stop_condition_config,
             recipient_type="resolver",
             recipient_value=[],
             channels=list(payload.channels),
@@ -126,6 +132,14 @@ class ReminderDefinitionService:
             row.offset_value = data["schedule"]["offset_value"]
             row.offset_unit = data["schedule"]["offset_unit"]
             row.offset_direction = data["schedule"]["direction"]
+        if "recurrence" in data and data["recurrence"] is not None:
+            recurrence = data["recurrence"]
+            row.repeat_enabled = recurrence.get("repeat_enabled", False)
+            row.repeat_frequency_value = recurrence.get("repeat_frequency_value")
+            row.repeat_frequency_unit = recurrence.get("repeat_frequency_unit")
+            row.max_attempts = recurrence.get("max_attempts")
+            row.stop_condition = recurrence.get("stop_condition", row.stop_condition)
+            row.stop_condition_config = recurrence.get("stop_condition_config")
         if "channels" in data and data["channels"] is not None:
             row.channels = list(data["channels"])
         if "template_key" in data:

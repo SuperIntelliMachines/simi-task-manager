@@ -155,6 +155,54 @@ async def test_organization_isolation(async_session):
 
 
 @pytest.mark.asyncio
+async def test_list_template_definitions_groups_by_name(authed_async_client):
+    client, headers, _org_id = authed_async_client
+
+    await client.post(
+        "/api/v1/reminder-templates",
+        headers=headers,
+        json=_email_payload(name="Renewal Notice"),
+    )
+    await client.post(
+        "/api/v1/reminder-templates",
+        headers=headers,
+        json={
+            "name": "Renewal Notice",
+            "channel": "in_app",
+            "title": "Renewal",
+            "body": "In-app body for {customer_name}",
+            "is_active": True,
+        },
+    )
+    await client.post(
+        "/api/v1/reminder-templates",
+        headers=headers,
+        json={
+            "name": "Renewal Notice",
+            "channel": "whatsapp",
+            "body": "Hi {{1}}",
+            "is_active": True,
+        },
+    )
+    await client.post(
+        "/api/v1/reminder-templates",
+        headers=headers,
+        json=_email_payload(name="Other Reminder"),
+    )
+
+    response = await client.get("/api/v1/reminder-templates/definitions", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] >= 2
+    by_name = {item["name"]: item for item in body["items"]}
+    assert "Renewal Notice" in by_name
+    renewal = by_name["Renewal Notice"]
+    assert set(renewal["channels"]) == {"email", "in_app", "whatsapp"}
+    assert len(renewal["template_ids"]) == 3
+    assert " (" not in renewal["name"]
+
+
+@pytest.mark.asyncio
 async def test_row_persists(async_session, authed_async_client):
     client, headers, org_id = authed_async_client
     created = await client.post(

@@ -20,7 +20,6 @@ import {
   formatOffsetSummary,
   getChannelOption,
   getRecipientLabel,
-  getTriggerLabel,
   loadClaimsRecipientMap,
   mapApiGroupToClaimsRule,
   mapClaimsFormToApiReminder,
@@ -30,12 +29,16 @@ import {
   type ClaimsReminderFormValues,
   type ClaimsReminderRuleView,
 } from "../../lib/claims/reminder-settings";
+import { useReminderModuleConfig } from "../../lib/reminder-management/hooks";
+import { resolveTriggerLabel } from "../../lib/reminder-management/module-config";
 
 export function ClaimsRemindersPage() {
   const { organizationId } = useWorkbench();
   const orgId = organizationId ?? null;
   const { showToast } = useToast();
   const queryClient = useQueryClient();
+  const moduleConfigQuery = useReminderModuleConfig(CLAIMS_REMINDER_ENTITY_TYPE);
+  const moduleConfig = moduleConfigQuery.data;
 
   const configsQuery = useReminderConfigs(
     orgId,
@@ -62,7 +65,7 @@ export function ClaimsRemindersPage() {
     const groups = configsQuery.data?.configs ?? [];
     const active = groups
       .filter((group) => !hiddenActiveIds.includes(group.config_id))
-      .map((group) => mapApiGroupToClaimsRule(group, recipientMap));
+      .map((group) => mapApiGroupToClaimsRule(group, recipientMap, moduleConfig));
 
     const disabledNotInActive = disabledRules.filter(
       (rule) => !active.some((item) => item.configId === rule.configId)
@@ -71,7 +74,7 @@ export function ClaimsRemindersPage() {
     return [...active, ...disabledNotInActive].sort((left, right) =>
       left.triggerLabel.localeCompare(right.triggerLabel)
     );
-  }, [configsQuery.data?.configs, recipientMap, hiddenActiveIds, disabledRules]);
+  }, [configsQuery.data?.configs, recipientMap, hiddenActiveIds, disabledRules, moduleConfig]);
 
   async function invalidate() {
     if (orgId == null) return;
@@ -100,7 +103,8 @@ export function ClaimsRemindersPage() {
     return {
       configId,
       triggerKey: form.triggerKey,
-      triggerLabel: getTriggerLabel(form.triggerKey),
+      triggerKind: form.triggerKind,
+      triggerLabel: resolveTriggerLabel(moduleConfig, form.triggerKey),
       direction: form.direction,
       offsetValue: form.offsetValue,
       offsetUnit: form.offsetUnit,
@@ -110,6 +114,11 @@ export function ClaimsRemindersPage() {
       recipientKey: form.recipientKey,
       recipientLabel: getRecipientLabel(form.recipientKey),
       enabled: form.enabled,
+      repeatEnabled: form.repeatEnabled,
+      repeatFrequencyValue: form.repeatFrequencyValue,
+      repeatFrequencyUnit: form.repeatFrequencyUnit,
+      maxAttempts: form.maxAttempts,
+      stopCondition: form.stopCondition,
     };
   }
 
@@ -206,14 +215,20 @@ export function ClaimsRemindersPage() {
         }
         showToast("Reminder created.", "success");
       } else if (editingRule) {
+        const api = mapClaimsFormToApiReminder(form);
         await apiClient.updateReminderConfig(editingRule.configId, {
-          channels: mapClaimsFormToApiReminder(form).channels,
+          channels: api.channels,
           offset_value: form.offsetValue,
           offset_unit: form.offsetUnit,
-          anchor_type: "workflow",
+          anchor_type: form.triggerKind,
           anchor_key: form.triggerKey,
           offset_direction: form.direction,
           is_active: form.enabled,
+          repeat_enabled: form.repeatEnabled,
+          repeat_frequency_value: form.repeatEnabled ? form.repeatFrequencyValue : null,
+          repeat_frequency_unit: form.repeatEnabled ? form.repeatFrequencyUnit : null,
+          max_attempts: form.maxAttempts,
+          stop_condition: form.stopCondition,
         });
         saveClaimsRecipient(orgId, editingRule.configId, form.recipientKey);
         const enriched = enrichRuleFromForm(editingRule.configId, form);
@@ -303,15 +318,18 @@ export function ClaimsRemindersPage() {
           automatically.
         </p>
 
-        {configsQuery.isLoading ? <Loading /> : null}
+        {configsQuery.isLoading || moduleConfigQuery.isLoading ? <Loading /> : null}
         {configsQuery.isError ? (
           <ErrorState message="Could not load Claims reminder settings." />
         ) : null}
 
-        {!configsQuery.isLoading && !configsQuery.isError && rules.length === 0 ? (
+        {!configsQuery.isLoading &&
+        !moduleConfigQuery.isLoading &&
+        !configsQuery.isError &&
+        rules.length === 0 ? (
           <EmptyState
             title="No reminders yet"
-            message="Create a reminder for workflow stages like Pending Submission or Return Pending."
+            message="Create a reminder for a Claims workflow stage or date trigger from module metadata."
           />
         ) : null}
 

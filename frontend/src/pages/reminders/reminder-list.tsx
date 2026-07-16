@@ -232,8 +232,7 @@ export function ReminderListPage() {
             <PlatformTable
               emptyMessage="No reminders found. Create a reminder to get started."
               columns={[
-                { key: "name", label: "Reminder Name" },
-                { key: "description", label: "Description" },
+                { key: "name", label: "Reminder Name", className: "min-w-[280px]" },
                 { key: "scheduled", label: "Scheduled Date & Time" },
                 { key: "channels", label: "Channels" },
                 { key: "status", label: "Status" },
@@ -244,12 +243,9 @@ export function ReminderListPage() {
               rows={rows.map((reminder) => ({
                 id: reminder.id,
                 cells: [
-                  <div key="name" className="min-w-[160px]">
+                  <div key="name" className="min-w-[280px] max-w-[420px]">
                     <div className="font-medium text-slate-900 dark:text-white">{reminder.title}</div>
                   </div>,
-                  <span key="description" className="max-w-[220px] truncate text-slate-600 dark:text-slate-300">
-                    {reminder.description?.trim() || "—"}
-                  </span>,
                   <span key="scheduled" className="whitespace-nowrap text-xs">
                     {formatDateTime(reminder.scheduled_at)}
                   </span>,
@@ -357,7 +353,6 @@ export function ReminderListPage() {
       >
         {viewing ? (
           <div className="space-y-3 text-sm text-slate-700 dark:text-slate-300">
-            <p>{viewing.description || "No description."}</p>
             <dl className="grid gap-2 sm:grid-cols-2">
               <div>
                 <dt className="text-xs uppercase tracking-wide text-slate-500">Scheduled</dt>

@@ -5,6 +5,7 @@ export type {
   PersonalReminderListFilters,
   PersonalReminderListResponse,
   PersonalReminderStatus,
+  PersonalReminderTriggerType,
   PersonalReminderUpsert,
 } from "./types";
 export {

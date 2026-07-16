@@ -1,16 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ReminderSchedulingFields } from "../reminder-management/ReminderSchedulingFields";
 import { PlatformDialog } from "../platform/platform-dialog";
 import Combobox from "../ui/Combobox";
 import { Button } from "../ui/button";
 import {
+  buildDefaultClaimsReminderForm,
   CLAIMS_REMINDER_CHANNELS,
+  CLAIMS_REMINDER_ENTITY_TYPE,
   CLAIMS_REMINDER_OFFSET_UNITS,
   CLAIMS_REMINDER_RECIPIENTS,
-  CLAIMS_REMINDER_TRIGGERS,
   DEFAULT_CLAIMS_REMINDER_FORM,
   type ClaimsReminderFormValues,
 } from "../../lib/claims/reminder-settings";
+import { useReminderModuleConfig } from "../../lib/reminder-management/hooks";
+import {
+  findModuleTrigger,
+  toTriggerComboboxItems,
+} from "../../lib/reminder-management/module-config";
+import type { ReminderStopCondition } from "../../lib/reminder-management/types";
 
 /** Match Insurance create-policy / policy-details field styling. */
 const labelClassName = "mb-2 block text-sm font-medium text-gray-800 dark:text-slate-300";
@@ -36,16 +44,20 @@ export function ClaimsReminderRuleDialog({
   onClose,
   onSave,
 }: ClaimsReminderRuleDialogProps) {
+  const moduleConfigQuery = useReminderModuleConfig(CLAIMS_REMINDER_ENTITY_TYPE);
+  const moduleConfig = moduleConfigQuery.data;
+
   const [form, setForm] = useState<ClaimsReminderFormValues>(DEFAULT_CLAIMS_REMINDER_FORM);
   const [error, setError] = useState<string | null>(null);
 
-  const triggerItems = useMemo(
-    () => CLAIMS_REMINDER_TRIGGERS.map((item) => ({ value: item.key, label: item.label })),
-    []
-  );
-  const offsetUnitItems = useMemo(
-    () => CLAIMS_REMINDER_OFFSET_UNITS.map((item) => ({ value: item.key, label: item.label })),
-    []
+  const triggerItems = useMemo(() => toTriggerComboboxItems(moduleConfig), [moduleConfig]);
+  const stopConditionOptions = useMemo(
+    () =>
+      (moduleConfig?.stopConditions ?? []).map((item) => ({
+        value: item.id,
+        label: item.label,
+      })),
+    [moduleConfig?.stopConditions]
   );
   const channelItems = useMemo(
     () => CLAIMS_REMINDER_CHANNELS.map((item) => ({ value: item.key, label: item.label })),
@@ -58,21 +70,47 @@ export function ClaimsReminderRuleDialog({
 
   useEffect(() => {
     if (!open) return;
-    setForm(initialValues ?? DEFAULT_CLAIMS_REMINDER_FORM);
+    const defaults = buildDefaultClaimsReminderForm(moduleConfig);
+    const next = initialValues ?? defaults;
+    // Ensure triggerKind matches metadata when editing an older rule.
+    const matched = findModuleTrigger(moduleConfig, next.triggerKey);
+    setForm({
+      ...next,
+      triggerKind: matched?.kind ?? next.triggerKind,
+      triggerKey: next.triggerKey || defaults.triggerKey,
+    });
     setError(null);
-  }, [open, initialValues]);
+  }, [open, initialValues, moduleConfig]);
 
   function update<K extends keyof ClaimsReminderFormValues>(key: K, value: ClaimsReminderFormValues[K]) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
   function handleSave() {
+    if (!form.triggerKey.trim()) {
+      setError(
+        triggerItems.length === 0
+          ? "No triggers are available for Claims yet."
+          : "Select a trigger."
+      );
+      return;
+    }
     if (!Number.isFinite(form.offsetValue) || form.offsetValue < 0) {
       setError("Offset must be zero or a positive number.");
       return;
     }
     if (!Number.isInteger(form.offsetValue)) {
       setError("Offset must be a whole number.");
+      return;
+    }
+    if (form.repeatEnabled) {
+      if (!Number.isFinite(form.repeatFrequencyValue) || form.repeatFrequencyValue < 1) {
+        setError("Repeat frequency must be at least 1 when repeat is enabled.");
+        return;
+      }
+    }
+    if (form.maxAttempts != null && form.maxAttempts < 1) {
+      setError("Maximum attempts must be at least 1 when provided.");
       return;
     }
     setError(null);
@@ -91,7 +129,7 @@ export function ClaimsReminderRuleDialog({
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving || moduleConfigQuery.isLoading}>
             {saving ? "Saving…" : "Save"}
           </Button>
         </>
@@ -102,64 +140,72 @@ export function ClaimsReminderRuleDialog({
           <span className={labelClassName}>Trigger</span>
           <Combobox
             items={triggerItems}
-            value={form.triggerKey}
-            onChange={(value) =>
-              update("triggerKey", (value ?? DEFAULT_CLAIMS_REMINDER_FORM.triggerKey) as ClaimsReminderFormValues["triggerKey"])
+            value={form.triggerKey || null}
+            onChange={(value) => {
+              const selected = findModuleTrigger(moduleConfig, value || "");
+              setForm((current) => ({
+                ...current,
+                triggerKey: value || "",
+                triggerKind: selected?.kind ?? current.triggerKind,
+              }));
+            }}
+            placeholder={
+              moduleConfigQuery.isLoading
+                ? "Loading triggers…"
+                : triggerItems.length === 0
+                  ? "No triggers available"
+                  : "Select trigger"
             }
-            placeholder="Select trigger"
             searchable={false}
             className={comboboxClassName}
           />
+          {!moduleConfigQuery.isLoading && triggerItems.length === 0 ? (
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              No triggers returned by Claims module metadata.
+            </p>
+          ) : null}
         </label>
 
-        <fieldset>
-          <legend className={labelClassName}>Timing</legend>
-          <div className="flex flex-wrap gap-4">
-            {(["before", "after"] as const).map((direction) => (
-              <label
-                key={direction}
-                className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-800 dark:text-slate-200"
-              >
-                <input
-                  type="radio"
-                  name="claims-reminder-timing"
-                  className="h-4 w-4 accent-[#14B8A6]"
-                  checked={form.direction === direction}
-                  onChange={() => update("direction", direction)}
-                />
-                <span className="capitalize">{direction}</span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
-
-        <div>
-          <span className={labelClassName}>Offset</span>
-          <div className="grid grid-cols-[1fr_1fr] gap-3">
-            <input
-              type="number"
-              min={0}
-              step={1}
-              className={fieldClassName}
-              value={form.offsetValue}
-              onChange={(event) => update("offsetValue", Number(event.target.value))}
-              aria-label="Offset value"
-            />
-            <Combobox
-              items={offsetUnitItems}
-              value={form.offsetUnit}
-              onChange={(value) =>
-                update(
-                  "offsetUnit",
-                  (value ?? DEFAULT_CLAIMS_REMINDER_FORM.offsetUnit) as ClaimsReminderFormValues["offsetUnit"]
-                )
-              }
-              placeholder="Select unit"
-              searchable={false}
-              className={comboboxClassName}
-            />
-          </div>
-        </div>
+        <ReminderSchedulingFields
+          value={{
+            offsetValue: form.offsetValue,
+            offsetUnit: form.offsetUnit,
+            offsetDirection: form.direction,
+            repeatEnabled: form.repeatEnabled,
+            repeatFrequencyValue: form.repeatFrequencyValue,
+            repeatFrequencyUnit: form.repeatFrequencyUnit,
+            maxAttempts: form.maxAttempts,
+            stopCondition: form.stopCondition,
+          }}
+          onChange={(patch) => {
+            if (patch.offsetValue !== undefined) update("offsetValue", patch.offsetValue);
+            if (patch.offsetUnit !== undefined) {
+              update("offsetUnit", patch.offsetUnit as ClaimsReminderFormValues["offsetUnit"]);
+            }
+            if (patch.offsetDirection !== undefined) update("direction", patch.offsetDirection);
+            if (patch.repeatEnabled !== undefined) update("repeatEnabled", patch.repeatEnabled);
+            if (patch.repeatFrequencyValue !== undefined) {
+              update("repeatFrequencyValue", patch.repeatFrequencyValue);
+            }
+            if (patch.repeatFrequencyUnit !== undefined) {
+              update(
+                "repeatFrequencyUnit",
+                patch.repeatFrequencyUnit as ClaimsReminderFormValues["repeatFrequencyUnit"]
+              );
+            }
+            if (patch.maxAttempts !== undefined) update("maxAttempts", patch.maxAttempts);
+            if (patch.stopCondition !== undefined) {
+              update("stopCondition", patch.stopCondition as ReminderStopCondition);
+            }
+          }}
+          offsetUnitOptions={CLAIMS_REMINDER_OFFSET_UNITS.map((item) => ({
+            value: item.key,
+            label: item.label,
+          }))}
+          stopConditionOptions={
+            stopConditionOptions.length > 0 ? stopConditionOptions : undefined
+          }
+        />
 
         <label className="block">
           <span className={labelClassName}>Channel</span>

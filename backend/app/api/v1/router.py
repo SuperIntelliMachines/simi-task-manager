@@ -13,6 +13,7 @@ from app.api.v1.endpoints.reminders import router as reminders_router
 from app.api.v1.endpoints.general_reminders import router as general_reminders_router
 from app.api.v1.endpoints.personal_reminders import router as personal_reminders_router
 from app.api.v1.endpoints.reminder_templates import router as reminder_templates_router
+from app.api.v1.endpoints.reminder_history import router as reminder_history_router
 from app.api.v1.endpoints.scheduler_jobs import router as scheduler_jobs_router
 from app.api.v1.endpoints.telegram_webhook import router as telegram_webhook_router
 from app.api.v1.endpoints.tasks import router as tasks_router
@@ -39,6 +40,7 @@ api_router.include_router(reminders_router)
 api_router.include_router(general_reminders_router)
 api_router.include_router(personal_reminders_router)
 api_router.include_router(reminder_templates_router)
+api_router.include_router(reminder_history_router)
 api_router.include_router(scheduler_jobs_router)
 api_router.include_router(internal_reminders_router)
 api_router.include_router(internal_personal_reminders_router)

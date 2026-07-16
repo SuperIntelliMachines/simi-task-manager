@@ -6,6 +6,8 @@ import type { ReminderTemplateDraft, ReminderTemplateListFilters } from "./types
 const KEYS = {
   list: (filters: Partial<ReminderTemplateListFilters>) =>
     ["reminder-templates", "list", filters] as const,
+  definitions: (isActive?: boolean) =>
+    ["reminder-templates", "definitions", isActive ?? true] as const,
   detail: (id: string) => ["reminder-templates", "detail", id] as const,
 };
 
@@ -13,6 +15,14 @@ export function useReminderTemplates(filters?: Partial<ReminderTemplateListFilte
   return useQuery({
     queryKey: KEYS.list(filters ?? {}),
     queryFn: () => reminderTemplateApi.list(filters),
+  });
+}
+
+export function useReminderTemplateDefinitions(options?: { isActive?: boolean }) {
+  const isActive = options?.isActive ?? true;
+  return useQuery({
+    queryKey: KEYS.definitions(isActive),
+    queryFn: () => reminderTemplateApi.listDefinitions({ isActive }),
   });
 }
 

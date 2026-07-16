@@ -11,6 +11,8 @@ interface MultiSelectProps {
   onChange: (value: string[]) => void;
   className?: string;
   columns?: 1 | 2;
+  /** Compact chip row (wrap) vs full-width grid tiles. */
+  variant?: "default" | "compact";
 }
 
 export default function MultiSelect({
@@ -19,6 +21,7 @@ export default function MultiSelect({
   onChange,
   className = "",
   columns = 2,
+  variant = "default",
 }: MultiSelectProps) {
   const normalized: Option[] = items.map((item) =>
     typeof item === "string" ? { value: item, label: item } : item
@@ -32,9 +35,15 @@ export default function MultiSelect({
     onChange([...value, optionValue]);
   }
 
+  const isCompact = variant === "compact";
+
   return (
     <div
-      className={`multi-select multi-select-cols-${columns} ${className}`.trim()}
+      className={
+        isCompact
+          ? `multi-select multi-select-compact ${className}`.trim()
+          : `multi-select multi-select-cols-${columns} ${className}`.trim()
+      }
       role="group"
       aria-label="Reminder channels"
     >
@@ -46,11 +55,15 @@ export default function MultiSelect({
             type="button"
             aria-pressed={selected}
             onClick={() => toggle(option.value)}
-            className={`multi-select-chip${selected ? " multi-select-chip-selected" : ""}`}
+            className={`multi-select-chip${isCompact ? " multi-select-chip-compact" : ""}${
+              selected ? " multi-select-chip-selected" : ""
+            }`}
           >
-            <span className="multi-select-chip-check" aria-hidden="true">
-              {selected ? "✓" : ""}
-            </span>
+            {!isCompact ? (
+              <span className="multi-select-chip-check" aria-hidden="true">
+                {selected ? "✓" : ""}
+              </span>
+            ) : null}
             <span className="multi-select-chip-label">{option.label}</span>
           </button>
         );

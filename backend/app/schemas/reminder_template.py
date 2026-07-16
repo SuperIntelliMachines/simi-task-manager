@@ -159,3 +159,18 @@ class ReminderTemplateListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ReminderTemplateDefinitionResponse(BaseModel):
+    """Logical reminder template definition (one name, many channel variants)."""
+
+    id: UUID
+    name: str
+    channels: list[str]
+    template_ids: list[UUID]
+    is_active: bool = True
+
+
+class ReminderTemplateDefinitionListResponse(BaseModel):
+    items: list[ReminderTemplateDefinitionResponse]
+    total: int

@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import (
     DEFAULT_REMINDER_ANCHOR_KEY,
+    DEFAULT_REMINDER_STOP_CONDITION,
     ReminderAnchorType,
     ReminderOffsetDirection,
 )
 from app.models.reminder_config import ReminderConfig
 from app.utils.datetime_utils import normalize_to_utc_naive, utcnow_naive
 from app.utils.reminder_config_validation import validate_anchor_fields, validate_scheduling_fields
+from app.utils.reminder_recurrence_validation import validate_recurrence_fields
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,12 @@ class ReminderDefinitionSetting:
     anchor_type: str = ReminderAnchorType.DATE.value
     anchor_key: str = DEFAULT_REMINDER_ANCHOR_KEY
     offset_direction: str = ReminderOffsetDirection.BEFORE.value
+    repeat_enabled: bool = False
+    repeat_frequency_value: int | None = None
+    repeat_frequency_unit: str | None = None
+    max_attempts: int | None = None
+    stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
+    stop_condition_config: dict[str, object] | None = None
 
 
 class ReminderConfigService:
@@ -132,6 +140,12 @@ class ReminderConfigService:
         sender_name: str | None,
         dnd_start: time | None,
         dnd_end: time | None,
+        repeat_enabled: bool,
+        repeat_frequency_value: int | None,
+        repeat_frequency_unit: str | None,
+        max_attempts: int | None,
+        stop_condition: str,
+        stop_condition_config: dict[str, object] | None,
         now: datetime,
         synced: list[ReminderConfig],
     ) -> None:
@@ -150,8 +164,12 @@ class ReminderConfigService:
         )
         if existing is not None:
             existing.is_active = True
-            existing.entity_label = entity_label
-            existing.sender_name = sender_name
+            if entity_label is not None:
+                existing.entity_label = entity_label
+            if sender_name is not None:
+                existing.sender_name = sender_name
+            if template_key is not None:
+                existing.template_key = template_key
             existing.dnd_start = dnd_start
             existing.dnd_end = dnd_end
             existing.offset_value = offset_value
@@ -161,6 +179,12 @@ class ReminderConfigService:
             existing.anchor_type = anchor_type
             existing.anchor_key = anchor_key
             existing.offset_direction = offset_direction
+            existing.repeat_enabled = repeat_enabled
+            existing.repeat_frequency_value = repeat_frequency_value
+            existing.repeat_frequency_unit = repeat_frequency_unit
+            existing.max_attempts = max_attempts
+            existing.stop_condition = stop_condition
+            existing.stop_condition_config = stop_condition_config
             existing.updated_at = now
             synced.append(existing)
             return
@@ -182,6 +206,12 @@ class ReminderConfigService:
             absolute_scheduled_at=absolute_scheduled_at,
             dnd_start=dnd_start,
             dnd_end=dnd_end,
+            repeat_enabled=repeat_enabled,
+            repeat_frequency_value=repeat_frequency_value,
+            repeat_frequency_unit=repeat_frequency_unit,
+            max_attempts=max_attempts,
+            stop_condition=stop_condition,
+            stop_condition_config=stop_condition_config,
             is_active=True,
             created_at=now,
             updated_at=now,
@@ -202,15 +232,25 @@ class ReminderConfigService:
         dnd_start: time | None = None,
         dnd_end: time | None = None,
         commit: bool = True,
+        replace_existing: bool = True,
     ) -> list[ReminderConfig]:
+        """Upsert reminder_configs for an entity.
+
+        When ``replace_existing`` is True (default), any other active configs for the
+        same entity that are not in this payload are deactivated — used by Settings UI.
+
+        When ``replace_existing`` is False, only the provided definitions are upserted
+        and existing sibling configs are left untouched — used by Create Reminder.
+        """
         normalized_type = (entity_type or "").strip().lower()
         if not definitions:
-            await self.deactivate_entity_configs(
-                organization_id=organization_id,
-                entity_type=normalized_type,
-                entity_id=entity_id,
-                commit=False,
-            )
+            if replace_existing:
+                await self.deactivate_entity_configs(
+                    organization_id=organization_id,
+                    entity_type=normalized_type,
+                    entity_id=entity_id,
+                    commit=False,
+                )
             if commit:
                 await self.session.commit()
             return []
@@ -229,6 +269,21 @@ class ReminderConfigService:
                 anchor_type=definition.anchor_type,
                 anchor_key=definition.anchor_key,
                 offset_direction=definition.offset_direction,
+            )
+            (
+                repeat_enabled,
+                repeat_frequency_value,
+                repeat_frequency_unit,
+                max_attempts,
+                stop_condition,
+                stop_condition_config,
+            ) = validate_recurrence_fields(
+                repeat_enabled=definition.repeat_enabled,
+                repeat_frequency_value=definition.repeat_frequency_value,
+                repeat_frequency_unit=definition.repeat_frequency_unit,
+                max_attempts=definition.max_attempts,
+                stop_condition=definition.stop_condition,
+                stop_condition_config=definition.stop_condition_config,
             )
             normalized_channels = [
                 (channel or "").strip().lower() for channel in definition.channels if (channel or "").strip()
@@ -265,6 +320,12 @@ class ReminderConfigService:
                     sender_name=sender_name,
                     dnd_start=dnd_start,
                     dnd_end=dnd_end,
+                    repeat_enabled=repeat_enabled,
+                    repeat_frequency_value=repeat_frequency_value,
+                    repeat_frequency_unit=repeat_frequency_unit,
+                    max_attempts=max_attempts,
+                    stop_condition=stop_condition,
+                    stop_condition_config=stop_condition_config,
                     now=now,
                     synced=synced,
                 )
@@ -278,7 +339,7 @@ class ReminderConfigService:
             if config.id is not None:
                 synced_ids.append(config.id)
 
-        if synced_ids:
+        if replace_existing and synced_ids:
             await self.deactivate_stale_entity_configs(
                 organization_id=organization_id,
                 entity_type=normalized_type,
@@ -530,7 +591,23 @@ class ReminderConfigService:
             entity_id=entity_id,
         )
         grouped: dict[
-            tuple[int, str, int, str, str, str, int, str, time | None, bool],
+            tuple[
+                int,
+                str,
+                int,
+                str,
+                str,
+                str,
+                int,
+                str,
+                time | None,
+                bool,
+                bool,
+                int | None,
+                str | None,
+                int | None,
+                str,
+            ],
             dict[str, object],
         ] = defaultdict(dict)
         for row in rows:
@@ -545,6 +622,11 @@ class ReminderConfigService:
                 row.offset_unit,
                 row.time_of_day,
                 row.is_active,
+                bool(getattr(row, "repeat_enabled", False)),
+                getattr(row, "repeat_frequency_value", None),
+                getattr(row, "repeat_frequency_unit", None),
+                getattr(row, "max_attempts", None),
+                getattr(row, "stop_condition", DEFAULT_REMINDER_STOP_CONDITION),
             )
             entry = grouped.get(key)
             if not entry:
@@ -558,6 +640,17 @@ class ReminderConfigService:
                     "offset_direction": row.offset_direction,
                     "offset_value": row.offset_value,
                     "offset_unit": row.offset_unit,
+                    "trigger_offset_value": row.offset_value,
+                    "trigger_offset_unit": row.offset_unit,
+                    "trigger_offset_direction": row.offset_direction,
+                    "repeat_enabled": bool(getattr(row, "repeat_enabled", False)),
+                    "repeat_frequency_value": getattr(row, "repeat_frequency_value", None),
+                    "repeat_frequency_unit": getattr(row, "repeat_frequency_unit", None),
+                    "max_attempts": getattr(row, "max_attempts", None),
+                    "stop_condition": getattr(
+                        row, "stop_condition", DEFAULT_REMINDER_STOP_CONDITION
+                    ),
+                    "stop_condition_config": getattr(row, "stop_condition_config", None),
                     "time_of_day": row.time_of_day,
                     "channels": [],
                     "is_active": row.is_active,

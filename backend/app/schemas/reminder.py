@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.core.enums import (
     DEFAULT_REMINDER_ANCHOR_KEY,
+    DEFAULT_REMINDER_STOP_CONDITION,
     ReminderAnchorType,
     ReminderOffsetDirection,
 )
@@ -17,6 +18,69 @@ from app.utils.reminder_config_validation import (
     validate_anchor_fields,
     validate_scheduling_fields,
 )
+from app.utils.reminder_recurrence_validation import validate_recurrence_fields
+
+
+class RecurrencePayload(BaseModel):
+    """Recurring reminder configuration."""
+
+    repeat_enabled: bool = False
+    repeat_frequency_value: int | None = Field(default=None, ge=1)
+    repeat_frequency_unit: str | None = None
+    max_attempts: int | None = Field(default=None, ge=1)
+    stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
+    stop_condition_config: dict[str, object] | None = None
+
+    @field_validator("repeat_frequency_unit")
+    @classmethod
+    def validate_repeat_unit(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in {"hours", "days", "weeks", "months"}:
+            raise ValueError("repeat_frequency_unit must be one of: hours, days, weeks, months")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_recurrence(self) -> "RecurrencePayload":
+        try:
+            validate_recurrence_fields(
+                repeat_enabled=self.repeat_enabled,
+                repeat_frequency_value=self.repeat_frequency_value,
+                repeat_frequency_unit=self.repeat_frequency_unit,
+                max_attempts=self.max_attempts,
+                stop_condition=self.stop_condition,
+                stop_condition_config=self.stop_condition_config,
+            )
+        except ReminderSchedulingValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+
+class TriggerOffsetPayload(BaseModel):
+    """Relative trigger offset from an anchor (maps to offset_* columns)."""
+
+    trigger_offset_value: int = Field(..., ge=0, alias="offset_value")
+    trigger_offset_unit: str = Field(default="days", alias="offset_unit")
+    trigger_offset_direction: str = Field(
+        default=ReminderOffsetDirection.BEFORE.value,
+        alias="offset_direction",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("trigger_offset_unit")
+    @classmethod
+    def validate_unit(cls, value: str) -> str:
+        normalized = (value or "days").strip().lower()
+        if normalized not in {"hours", "days", "weeks", "months"}:
+            raise ValueError("trigger_offset_unit must be one of: hours, days, weeks, months")
+        return normalized
+
+    @field_validator("trigger_offset_direction")
+    @classmethod
+    def validate_direction(cls, value: str) -> str:
+        return validate_anchor_fields(offset_direction=value)[2]
 
 
 class ReminderConfigCreateBody(BaseModel):
@@ -32,8 +96,13 @@ class ReminderConfigCreateBody(BaseModel):
     anchor_type: str = ReminderAnchorType.DATE.value
     anchor_key: str = DEFAULT_REMINDER_ANCHOR_KEY
     offset_direction: str = ReminderOffsetDirection.BEFORE.value
+    template_key: str | None = None
+    entity_label: str | None = None
+    sender_name: str | None = None
     dnd_start: time | None = None
     dnd_end: time | None = None
+    # True (default): Settings-style replace. False: append without deactivating siblings.
+    replace_existing: bool = True
 
     @field_validator("entity_type")
     @classmethod
@@ -145,6 +214,15 @@ class ReminderConfigResponse(BaseModel):
     offset_direction: str
     offset_value: int
     offset_unit: str
+    trigger_offset_value: int | None = None
+    trigger_offset_unit: str | None = None
+    trigger_offset_direction: str | None = None
+    repeat_enabled: bool = False
+    repeat_frequency_value: int | None = None
+    repeat_frequency_unit: str | None = None
+    max_attempts: int | None = None
+    stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
+    stop_condition_config: dict[str, object] | None = None
     time_of_day: time | None = None
     scheduled_at: datetime | None = None
     dnd_start: time | None = None
@@ -162,6 +240,9 @@ class ReminderConfigResponse(BaseModel):
             data = dict(value)
             if "scheduled_at" not in data and "absolute_scheduled_at" in data:
                 data["scheduled_at"] = data.get("absolute_scheduled_at")
+            data.setdefault("trigger_offset_value", data.get("offset_value"))
+            data.setdefault("trigger_offset_unit", data.get("offset_unit"))
+            data.setdefault("trigger_offset_direction", data.get("offset_direction"))
             return data
         if hasattr(value, "absolute_scheduled_at"):
             return {
@@ -180,6 +261,19 @@ class ReminderConfigResponse(BaseModel):
                 ),
                 "offset_value": value.offset_value,
                 "offset_unit": value.offset_unit,
+                "trigger_offset_value": value.offset_value,
+                "trigger_offset_unit": value.offset_unit,
+                "trigger_offset_direction": getattr(
+                    value, "offset_direction", ReminderOffsetDirection.BEFORE.value
+                ),
+                "repeat_enabled": bool(getattr(value, "repeat_enabled", False)),
+                "repeat_frequency_value": getattr(value, "repeat_frequency_value", None),
+                "repeat_frequency_unit": getattr(value, "repeat_frequency_unit", None),
+                "max_attempts": getattr(value, "max_attempts", None),
+                "stop_condition": getattr(
+                    value, "stop_condition", DEFAULT_REMINDER_STOP_CONDITION
+                ),
+                "stop_condition_config": getattr(value, "stop_condition_config", None),
                 "time_of_day": value.time_of_day,
                 "scheduled_at": value.absolute_scheduled_at,
                 "dnd_start": value.dnd_start,
@@ -262,6 +356,15 @@ class ReminderDefinitionBody(BaseModel):
     anchor_type: str = ReminderAnchorType.DATE.value
     anchor_key: str = DEFAULT_REMINDER_ANCHOR_KEY
     offset_direction: str = ReminderOffsetDirection.BEFORE.value
+    trigger_offset_value: int | None = Field(default=None, ge=0)
+    trigger_offset_unit: str | None = None
+    trigger_offset_direction: str | None = None
+    repeat_enabled: bool = False
+    repeat_frequency_value: int | None = Field(default=None, ge=1)
+    repeat_frequency_unit: str | None = None
+    max_attempts: int | None = Field(default=None, ge=1)
+    stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
+    stop_condition_config: dict[str, object] | None = None
 
     @field_validator("channels")
     @classmethod
@@ -297,6 +400,12 @@ class ReminderDefinitionBody(BaseModel):
 
     @model_validator(mode="after")
     def validate_scheduling_mode(self) -> ReminderDefinitionBody:
+        if self.trigger_offset_value is not None:
+            self.offset_value = self.trigger_offset_value
+        if self.trigger_offset_unit is not None:
+            self.offset_unit = self.trigger_offset_unit
+        if self.trigger_offset_direction is not None:
+            self.offset_direction = self.trigger_offset_direction
         try:
             self.anchor_type, self.anchor_key, self.offset_direction = validate_anchor_fields(
                 anchor_type=self.anchor_type,
@@ -308,6 +417,14 @@ class ReminderDefinitionBody(BaseModel):
                 offset_unit=self.offset_unit,
                 time_of_day=self.time_of_day,
                 absolute_scheduled_at=self.scheduled_at,
+            )
+            validate_recurrence_fields(
+                repeat_enabled=self.repeat_enabled,
+                repeat_frequency_value=self.repeat_frequency_value,
+                repeat_frequency_unit=self.repeat_frequency_unit,
+                max_attempts=self.max_attempts,
+                stop_condition=self.stop_condition,
+                stop_condition_config=self.stop_condition_config,
             )
         except ReminderSchedulingValidationError as exc:
             raise ValueError(str(exc)) from exc
@@ -403,6 +520,15 @@ class ReminderConfigGroupResponse(BaseModel):
     offset_direction: str = ReminderOffsetDirection.BEFORE.value
     offset_value: int
     offset_unit: str
+    trigger_offset_value: int | None = None
+    trigger_offset_unit: str | None = None
+    trigger_offset_direction: str | None = None
+    repeat_enabled: bool = False
+    repeat_frequency_value: int | None = None
+    repeat_frequency_unit: str | None = None
+    max_attempts: int | None = None
+    stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
+    stop_condition_config: dict[str, object] | None = None
     time_of_day: time | None = None
     channels: list[str] = Field(default_factory=list)
     is_active: bool
@@ -422,6 +548,15 @@ class ReminderConfigUpdateBody(BaseModel):
     anchor_type: str | None = None
     anchor_key: str | None = None
     offset_direction: str | None = None
+    trigger_offset_value: int | None = Field(default=None, ge=0)
+    trigger_offset_unit: str | None = None
+    trigger_offset_direction: str | None = None
+    repeat_enabled: bool | None = None
+    repeat_frequency_value: int | None = Field(default=None, ge=1)
+    repeat_frequency_unit: str | None = None
+    max_attempts: int | None = Field(default=None, ge=1)
+    stop_condition: str | None = None
+    stop_condition_config: dict[str, object] | None = None
     dnd_start: time | None = None
     dnd_end: time | None = None
     is_active: bool | None = None
@@ -588,12 +723,18 @@ class ReminderRecipientTypeResponse(BaseModel):
     label: str
 
 
+class ReminderStopConditionResponse(BaseModel):
+    id: str
+    label: str
+
+
 class ReminderModuleSchemaResponse(BaseModel):
     trigger_types: list[ReminderTriggerFieldResponse] = Field(default_factory=list)
     workflow_events: list[ReminderWorkflowEventResponse] = Field(default_factory=list)
     recipient_types: list[ReminderRecipientTypeResponse] = Field(default_factory=list)
     supported_channels: list[str] = Field(default_factory=list)
     default_template: str | None = None
+    stop_conditions: list[ReminderStopConditionResponse] = Field(default_factory=list)
 
 
 class ReminderTemplateCatalogResponse(BaseModel):

@@ -33,8 +33,11 @@ class EmailAdapter(ChannelAdapter):
         recipient: str,
         text: str,
         template_name: str | None = None,
+        template_language: str | None = None,
         template_variables: dict[str, str] | None = None,
     ) -> str:
+        # ChannelService always forwards template_* kwargs; Email ignores them.
+        _ = template_name, template_language, template_variables
         settings = connection_settings or {}
         subject = str(settings.get("subject") or "Insurance Reminder")
         html = settings.get("html")

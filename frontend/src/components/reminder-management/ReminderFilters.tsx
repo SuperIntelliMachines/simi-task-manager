@@ -106,6 +106,13 @@ type HistoryFiltersProps = {
   onChange: (next: ReminderHistoryFilters) => void;
 };
 
+function withHistoryPageReset(
+  value: ReminderHistoryFilters,
+  patch: Partial<ReminderHistoryFilters>
+): ReminderHistoryFilters {
+  return { ...value, ...patch, page: 0 };
+}
+
 export function ReminderHistoryFiltersBar({ value, onChange }: HistoryFiltersProps) {
   const modulesQuery = useReminderModules();
   const channelsQuery = useReminderChannels();
@@ -133,12 +140,25 @@ export function ReminderHistoryFiltersBar({ value, onChange }: HistoryFiltersPro
   ];
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <label className="block">
+        <span className="sr-only">Search</span>
+        <input
+          className={fieldClassName}
+          placeholder="Search title or recipient…"
+          value={value.search}
+          onChange={(event) => onChange(withHistoryPageReset(value, { search: event.target.value }))}
+        />
+      </label>
       <Combobox
         items={moduleItems}
         value={value.module}
         onChange={(next) =>
-          onChange({ ...value, module: (next || "all") as ReminderHistoryFilters["module"] })
+          onChange(
+            withHistoryPageReset(value, {
+              module: (next || "all") as ReminderHistoryFilters["module"],
+            })
+          )
         }
         placeholder="All modules"
         searchable={false}
@@ -148,10 +168,11 @@ export function ReminderHistoryFiltersBar({ value, onChange }: HistoryFiltersPro
         items={statusItems}
         value={value.status}
         onChange={(next) =>
-          onChange({
-            ...value,
-            status: (next || "all") as ReminderHistoryFilters["status"],
-          })
+          onChange(
+            withHistoryPageReset(value, {
+              status: (next || "all") as ReminderHistoryFilters["status"],
+            })
+          )
         }
         placeholder="All statuses"
         searchable={false}
@@ -161,7 +182,11 @@ export function ReminderHistoryFiltersBar({ value, onChange }: HistoryFiltersPro
         items={channelItems}
         value={value.channel}
         onChange={(next) =>
-          onChange({ ...value, channel: (next || "all") as ReminderHistoryFilters["channel"] })
+          onChange(
+            withHistoryPageReset(value, {
+              channel: (next || "all") as ReminderHistoryFilters["channel"],
+            })
+          )
         }
         placeholder="All channels"
         searchable={false}
@@ -171,14 +196,16 @@ export function ReminderHistoryFiltersBar({ value, onChange }: HistoryFiltersPro
         type="date"
         className={fieldClassName}
         value={value.dateFrom}
-        onChange={(event) => onChange({ ...value, dateFrom: event.target.value })}
+        onChange={(event) =>
+          onChange(withHistoryPageReset(value, { dateFrom: event.target.value }))
+        }
         aria-label="From date"
       />
       <input
         type="date"
         className={fieldClassName}
         value={value.dateTo}
-        onChange={(event) => onChange({ ...value, dateTo: event.target.value })}
+        onChange={(event) => onChange(withHistoryPageReset(value, { dateTo: event.target.value }))}
         aria-label="To date"
       />
     </div>

@@ -334,6 +334,15 @@ export type ReminderConfigGroupRecord = {
   offset_direction?: string;
   offset_value: number;
   offset_unit: string;
+  trigger_offset_value?: number;
+  trigger_offset_unit?: string;
+  trigger_offset_direction?: string;
+  repeat_enabled?: boolean;
+  repeat_frequency_value?: number | null;
+  repeat_frequency_unit?: string | null;
+  max_attempts?: number | null;
+  stop_condition?: string;
+  stop_condition_config?: Record<string, unknown> | null;
   time_of_day?: string | null;
   channels: string[];
   is_active: boolean;
@@ -356,6 +365,15 @@ export type ReminderDefinitionInput = {
   anchor_type?: string;
   anchor_key?: string;
   offset_direction?: string;
+  trigger_offset_value?: number | null;
+  trigger_offset_unit?: string;
+  trigger_offset_direction?: string;
+  repeat_enabled?: boolean;
+  repeat_frequency_value?: number | null;
+  repeat_frequency_unit?: string | null;
+  max_attempts?: number | null;
+  stop_condition?: string;
+  stop_condition_config?: Record<string, unknown> | null;
 };
 
 export type ReminderSettingsSaveInput = {
@@ -393,8 +411,13 @@ export type ReminderConfigCreateInput = {
   anchor_type?: string;
   anchor_key?: string;
   offset_direction?: string;
+  template_key?: string | null;
+  entity_label?: string | null;
+  sender_name?: string | null;
   dnd_start?: string | null;
   dnd_end?: string | null;
+  /** When false, append configs without deactivating siblings (Create Reminder Relative). */
+  replace_existing?: boolean;
 };
 
 export type ReminderConfigUpdateInput = {
@@ -410,4 +433,10 @@ export type ReminderConfigUpdateInput = {
   dnd_start?: string | null;
   dnd_end?: string | null;
   is_active?: boolean | null;
+  repeat_enabled?: boolean | null;
+  repeat_frequency_value?: number | null;
+  repeat_frequency_unit?: string | null;
+  max_attempts?: number | null;
+  stop_condition?: string | null;
+  stop_condition_config?: Record<string, unknown> | null;
 };

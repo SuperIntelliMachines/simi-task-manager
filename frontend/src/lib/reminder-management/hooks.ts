@@ -6,7 +6,6 @@ import { getReminderModuleConfig, listReminderModules } from "./module-config";
 import { reminderManagementApi } from "./service";
 import type {
   ReminderDraft,
-  ReminderHistoryFilters,
   ReminderListFilters,
   ReminderModuleKey,
   ReminderTemplate,
@@ -18,8 +17,6 @@ const KEYS = {
   templates: ["reminder-management", "templates"] as const,
   catalogTemplates: ["reminder-management", "catalog-templates"] as const,
   channels: ["reminder-management", "channels"] as const,
-  history: (filters: Partial<ReminderHistoryFilters>) =>
-    ["reminder-management", "history", filters] as const,
   modules: ["reminder-management", "modules"] as const,
   moduleConfig: (module: ReminderModuleKey) =>
     ["reminder-management", "module-config", module] as const,
@@ -124,6 +121,7 @@ export function useTestManagedReminder() {
     mutationFn: (id: string) => reminderManagementApi.testReminder(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["reminder-management", "history"] });
+      void queryClient.invalidateQueries({ queryKey: ["reminder-history"] });
     },
   });
 }
@@ -164,12 +162,5 @@ export function useDeleteReminderTemplate() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KEYS.templates });
     },
-  });
-}
-
-export function useReminderHistory(filters: Partial<ReminderHistoryFilters>) {
-  return useQuery({
-    queryKey: KEYS.history(filters),
-    queryFn: () => reminderManagementApi.listHistory(filters),
   });
 }

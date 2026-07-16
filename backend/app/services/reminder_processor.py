@@ -19,6 +19,7 @@ from app.services.reminder_resolvers import (
     get_reminder_resolver_factory,
 )
 from app.utils.reminder_query_time import fetch_db_now
+from app.utils.reminder_recurrence import count_sent_instances, schedule_next_recurrence
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,33 @@ class ReminderProcessorService:
                 if entity is None:
                     raise ValueError("entity not found")
 
+                sent_count = await count_sent_instances(
+                    self.session,
+                    config_id=int(config.id),
+                    entity_id=int(instance.entity_id),
+                )
+
+                if not config.is_active:
+                    instance.status = "CANCELED"
+                    instance.updated_at = now
+                    continue
+
+                max_attempts = getattr(config, "max_attempts", None)
+                if max_attempts is not None and sent_count >= int(max_attempts):
+                    instance.status = "CANCELED"
+                    instance.updated_at = now
+                    continue
+
+                if resolver.should_stop_reminder(
+                    entity,
+                    config,
+                    sent_count=sent_count,
+                    now=now,
+                ):
+                    instance.status = "CANCELED"
+                    instance.updated_at = now
+                    continue
+
                 if resolver.should_cancel_instance(entity):
                     instance.status = "CANCELED"
                     instance.updated_at = now
@@ -186,6 +214,25 @@ class ReminderProcessorService:
                 instance.updated_at = now
                 sent += 1
                 logger.info(f"Reminder sent successfully for instance {instance.id}")
+
+                if bool(getattr(config, "repeat_enabled", False)):
+                    next_sent_count = sent_count + 1
+                    max_attempts = getattr(config, "max_attempts", None)
+                    should_continue = max_attempts is None or next_sent_count < int(max_attempts)
+                    if should_continue and not resolver.should_stop_reminder(
+                        entity,
+                        config,
+                        sent_count=next_sent_count,
+                        now=now,
+                    ):
+                        await schedule_next_recurrence(
+                            self.session,
+                            config=config,
+                            organization_id=organization_id,
+                            entity_type=instance.entity_type,
+                            entity_id=int(instance.entity_id),
+                            from_time=now,
+                        )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     f"Unexpected error while processing instance {instance.id}"

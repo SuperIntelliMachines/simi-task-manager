@@ -24,6 +24,7 @@ from app.schemas.reminder import (
     ReminderModuleSummaryResponse,
     ReminderRecipientTypeResponse,
     ReminderSettingsSaveBody,
+    ReminderStopConditionResponse,
     ReminderTemplateCatalogResponse,
     ReminderTriggerFieldResponse,
     ReminderWorkflowEventResponse,
@@ -99,6 +100,10 @@ def _serialize_module_schema(module_id: str) -> ReminderModuleSchemaResponse:
         ],
         supported_channels=list(meta.supported_channels),
         default_template=meta.default_template,
+        stop_conditions=[
+            ReminderStopConditionResponse(id=item.id, label=item.label)
+            for item in meta.stop_conditions
+        ],
     )
 
 
@@ -191,6 +196,12 @@ async def save_reminder_settings(
                         anchor_type=reminder.anchor_type,
                         anchor_key=reminder.anchor_key,
                         offset_direction=reminder.offset_direction,
+                        repeat_enabled=reminder.repeat_enabled,
+                        repeat_frequency_value=reminder.repeat_frequency_value,
+                        repeat_frequency_unit=reminder.repeat_frequency_unit,
+                        max_attempts=reminder.max_attempts,
+                        stop_condition=reminder.stop_condition,
+                        stop_condition_config=reminder.stop_condition_config,
                     )
                     for reminder in body.reminders
                 ],
@@ -254,11 +265,21 @@ async def create_reminder_configs(
                         anchor_type=reminder.anchor_type,
                         anchor_key=reminder.anchor_key,
                         offset_direction=reminder.offset_direction,
+                        repeat_enabled=reminder.repeat_enabled,
+                        repeat_frequency_value=reminder.repeat_frequency_value,
+                        repeat_frequency_unit=reminder.repeat_frequency_unit,
+                        max_attempts=reminder.max_attempts,
+                        stop_condition=reminder.stop_condition,
+                        stop_condition_config=reminder.stop_condition_config,
                     )
                     for reminder in body.reminders
                 ],
+                template_key=body.template_key,
+                entity_label=body.entity_label,
+                sender_name=body.sender_name,
                 dnd_start=body.dnd_start,
                 dnd_end=body.dnd_end,
+                replace_existing=body.replace_existing,
             )
         else:
             await service.create_configs(
@@ -270,6 +291,9 @@ async def create_reminder_configs(
                 offset_unit=body.offset_unit,
                 dnd_start=body.dnd_start,
                 dnd_end=body.dnd_end,
+                template_key=body.template_key,
+                entity_label=body.entity_label,
+                sender_name=body.sender_name,
                 anchor_type=body.anchor_type,
                 anchor_key=body.anchor_key,
                 offset_direction=body.offset_direction,

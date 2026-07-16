@@ -48,8 +48,10 @@ class TelegramAdapter(ChannelAdapter):
         recipient: str,
         text: str,
         template_name: str | None = None,
+        template_language: str | None = None,
         template_variables: dict[str, str] | None = None,
     ) -> str:
+        _ = template_name, template_language, template_variables
         from app.channels.telegram_settings import resolve_telegram_bot_token
         from app.integrations.telegram.client import TelegramApiClient
 

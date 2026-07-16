@@ -11,6 +11,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.enums import DEFAULT_REMINDER_STOP_CONDITION
+from app.utils.reminder_config_validation import ReminderSchedulingValidationError
+from app.utils.reminder_recurrence_validation import validate_recurrence_fields
+
 TriggerType = Literal["date", "workflow"]
 OffsetUnit = Literal["minutes", "hours", "days", "weeks", "months"]
 OffsetDirection = Literal["before", "after"]
@@ -65,12 +69,49 @@ class SchedulePayload(BaseModel):
         return normalized
 
 
+class RecurrencePayload(BaseModel):
+    repeat_enabled: bool = False
+    repeat_frequency_value: int | None = Field(default=None, ge=1)
+    repeat_frequency_unit: str | None = None
+    max_attempts: int | None = Field(default=None, ge=1)
+    stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
+    stop_condition_config: dict[str, object] | None = None
+
+    @field_validator("repeat_frequency_unit")
+    @classmethod
+    def validate_repeat_unit(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in ALLOWED_OFFSET_UNITS - {"minutes"}:
+            raise ValueError(
+                "recurrence.repeat_frequency_unit must be one of: hours, days, weeks, months"
+            )
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_recurrence(self) -> "RecurrencePayload":
+        try:
+            validate_recurrence_fields(
+                repeat_enabled=self.repeat_enabled,
+                repeat_frequency_value=self.repeat_frequency_value,
+                repeat_frequency_unit=self.repeat_frequency_unit,
+                max_attempts=self.max_attempts,
+                stop_condition=self.stop_condition,
+                stop_condition_config=self.stop_condition_config,
+            )
+        except ReminderSchedulingValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+
 class GeneralReminderCreateRequest(BaseModel):
     module_key: str = Field(..., min_length=1, max_length=50)
     reminder_name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     trigger: TriggerPayload
     schedule: SchedulePayload
+    recurrence: RecurrencePayload = Field(default_factory=RecurrencePayload)
     channels: list[str] = Field(..., min_length=1)
     template_key: str | None = Field(default=None, max_length=100)
     is_active: bool = True
@@ -126,6 +167,7 @@ class GeneralReminderUpdateRequest(BaseModel):
     description: str | None = None
     trigger: TriggerPayload | None = None
     schedule: SchedulePayload | None = None
+    recurrence: RecurrencePayload | None = None
     channels: list[str] | None = None
     template_key: str | None = Field(default=None, max_length=100)
     is_active: bool | None = None
@@ -191,6 +233,7 @@ class GeneralReminderResponse(BaseModel):
     description: str | None
     trigger: TriggerPayload
     schedule: SchedulePayload
+    recurrence: RecurrencePayload
     channels: list[str]
     template_key: str | None
     is_active: bool

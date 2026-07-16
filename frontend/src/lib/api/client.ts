@@ -42,6 +42,14 @@ export type GeneralReminderUpsertDto = {
   description?: string | null;
   trigger: { type: string; key: string };
   schedule: { offset_value: number; offset_unit: string; direction: string };
+  recurrence?: {
+    repeat_enabled: boolean;
+    repeat_frequency_value?: number | null;
+    repeat_frequency_unit?: string | null;
+    max_attempts?: number | null;
+    stop_condition?: string;
+    stop_condition_config?: Record<string, unknown> | null;
+  };
   channels: string[];
   template_key?: string | null;
   is_active: boolean;
@@ -50,6 +58,7 @@ export type GeneralReminderUpsertDto = {
 export type GeneralReminderDefinitionDto = GeneralReminderUpsertDto & {
   id: string;
   organization_id: number;
+  recurrence: NonNullable<GeneralReminderUpsertDto["recurrence"]>;
   created_by: number | null;
   created_at: string;
   updated_at: string;
@@ -121,6 +130,48 @@ export type ReminderTemplateUpsertDto = {
   variables?: string[];
   is_active?: boolean;
   whatsapp_template_name?: string | null;
+};
+
+/** Logical reminder template definition (name with channel variants). */
+export type ReminderTemplateDefinitionDto = {
+  id: string;
+  name: string;
+  channels: string[];
+  template_ids: string[];
+  is_active: boolean;
+};
+
+/** Reminder History DTO (execution log for personal reminders). */
+export type ReminderHistoryListItemDto = {
+  id: string;
+  organization_id: number;
+  reminder_id: string | null;
+  template_id: string | null;
+  created_by: number;
+  reminder_title: string;
+  channel: string;
+  recipient: string;
+  status: string;
+  provider_message_id: string | null;
+  error_message: string | null;
+  executed_at: string;
+};
+
+export type ReminderHistoryDetailDto = ReminderHistoryListItemDto & {
+  created_at: string;
+  reminder: {
+    id: string;
+    title: string;
+    status: string;
+    scheduled_at: string;
+    is_active: boolean;
+  } | null;
+  template: {
+    id: string;
+    name: string;
+    channel: string;
+    is_active: boolean;
+  } | null;
 };
 
 const API_BASE = "/api/v1";
@@ -552,6 +603,7 @@ export const apiClient = {
       recipient_types: Array<{ id: string; label: string }>;
       supported_channels: string[];
       default_template?: string | null;
+      stop_conditions?: Array<{ id: string; label: string }>;
     }>(`/reminders/modules/${encodeURIComponent(module)}/schema`);
   },
 
@@ -685,6 +737,15 @@ export const apiClient = {
     });
   },
 
+  async listReminderTemplateDefinitions(params?: { is_active?: boolean }) {
+    return await requestJson<{
+      items: ReminderTemplateDefinitionDto[];
+      total: number;
+    }>("/reminder-templates/definitions", undefined, {
+      is_active: params?.is_active,
+    });
+  },
+
   async getReminderTemplate(id: string) {
     return await requestJson<ReminderTemplateDto>(`/reminder-templates/${encodeURIComponent(id)}`);
   },
@@ -707,6 +768,39 @@ export const apiClient = {
     return await requestJson<void>(`/reminder-templates/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
+  },
+
+  async listReminderHistory(params?: {
+    status?: string;
+    channel?: string;
+    organization_id?: number;
+    executed_from?: string;
+    executed_to?: string;
+    search?: string;
+    page?: number;
+    page_size?: number;
+  }) {
+    return await requestJson<{
+      items: ReminderHistoryListItemDto[];
+      total: number;
+      page: number;
+      page_size: number;
+    }>("/reminder-history", undefined, {
+      status: params?.status,
+      channel: params?.channel,
+      organization_id: params?.organization_id,
+      executed_from: params?.executed_from,
+      executed_to: params?.executed_to,
+      search: params?.search,
+      page: params?.page,
+      page_size: params?.page_size,
+    });
+  },
+
+  async getReminderHistory(id: string) {
+    return await requestJson<ReminderHistoryDetailDto>(
+      `/reminder-history/${encodeURIComponent(id)}`
+    );
   },
 
   async listNotifications(params?: { status?: string; limit?: number; offset?: number }) {

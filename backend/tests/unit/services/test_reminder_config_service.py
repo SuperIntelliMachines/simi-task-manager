@@ -6,7 +6,11 @@ from sqlalchemy import select
 
 from app.models.core import Organization
 from app.models.reminder_config import ReminderConfig
-from app.services.reminder_config_service import ReminderConfigService, ReminderOffsetSetting
+from app.services.reminder_config_service import (
+    ReminderConfigService,
+    ReminderDefinitionSetting,
+    ReminderOffsetSetting,
+)
 
 
 def utcnow_naive() -> datetime:
@@ -285,3 +289,65 @@ async def test_update_config_with_channels_removes_extra_channels(async_session)
         entity_id=1300,
     )
     assert {row.channel for row in active_after} == {"sms"}
+
+
+@pytest.mark.asyncio
+async def test_save_entity_definitions_append_keeps_siblings(async_session):
+    """Create Reminder Relative uses replace_existing=False so Claims settings survive."""
+    org = await seed_org(async_session)
+    service = ReminderConfigService(async_session)
+
+    first = await service.save_entity_definitions(
+        organization_id=org.id,
+        entity_type="claims",
+        entity_id=0,
+        definitions=[
+            ReminderDefinitionSetting(
+                channels=["in_app"],
+                offset_value=24,
+                offset_unit="hours",
+                anchor_type="workflow",
+                anchor_key="pending_submission",
+                offset_direction="after",
+            )
+        ],
+        entity_label="Claims Reminders",
+        replace_existing=True,
+    )
+    assert len(first) == 1
+
+    second = await service.save_entity_definitions(
+        organization_id=org.id,
+        entity_type="claims",
+        entity_id=0,
+        definitions=[
+            ReminderDefinitionSetting(
+                channels=["email"],
+                offset_value=48,
+                offset_unit="hours",
+                anchor_type="workflow",
+                anchor_key="submitted",
+                offset_direction="after",
+                repeat_enabled=True,
+                repeat_frequency_value=24,
+                repeat_frequency_unit="hours",
+                max_attempts=5,
+                stop_condition="workflow_status_changed",
+            )
+        ],
+        entity_label="Follow up after submit",
+        replace_existing=False,
+    )
+    assert len(second) == 1
+    assert second[0].repeat_enabled is True
+    assert second[0].entity_label == "Follow up after submit"
+
+    active = await service.list_active_configs(
+        organization_id=org.id,
+        entity_type="claims",
+        entity_id=0,
+    )
+    assert len(active) == 2
+    assert {row.anchor_key for row in active} == {"pending_submission", "submitted"}
+    pending = next(row for row in active if row.anchor_key == "pending_submission")
+    assert pending.entity_label == "Claims Reminders"

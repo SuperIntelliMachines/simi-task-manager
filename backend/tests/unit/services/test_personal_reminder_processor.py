@@ -394,6 +394,72 @@ async def test_policy_renewal_reminder_resolves_all_four_even_with_mismatched_va
         "company_name": "SIMI AI Task Manager",
     }
 
+
+@pytest.mark.asyncio
+async def test_process_due_email_reminder_through_channel_service(async_session, monkeypatch):
+    """Email personal reminders must succeed when ChannelService forwards template_* kwargs."""
+    from app.channels.email_adapter import EmailAdapter
+    from app.services.email_service import EmailService
+
+    org = await seed_org(async_session)
+    user = await seed_user(async_session, organization_id=org.id)
+    reminder = await _seed_personal_reminder(
+        async_session,
+        org_id=org.id,
+        user_id=user.id,
+        channels=["email"],
+        email="holder@example.com",
+        title="Interview Reminder",
+        custom_message="Please join the interview tomorrow.",
+    )
+
+    sent: dict[str, object] = {}
+
+    class FakeEmailService(EmailService):
+        async def send_email(self, *, to, subject, text, html=None):
+            sent.update({"to": to, "subject": subject, "text": text, "html": html})
+            return "smtp-id-email-1"
+
+    async def _channel_send_like_production(self, **kwargs):
+        # Mirror ChannelService: always forward template_* to the adapter.
+        adapter = EmailAdapter(
+            FakeEmailService(
+                smtp_host="smtp.gmail.com",
+                smtp_username="noreply@example.com",
+                smtp_password="secret",
+                from_email="noreply@example.com",
+            )
+        )
+        provider_id = await adapter.send_outbound_message(
+            connection_settings=kwargs.get("connection_settings") or {},
+            recipient=kwargs["recipient"],
+            text=kwargs["text"],
+            template_name=kwargs.get("template_name"),
+            template_language=kwargs.get("template_language"),
+            template_variables=kwargs.get("template_variables"),
+        )
+        assert provider_id == "smtp-id-email-1"
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.personal_reminder_processor.ChannelService.send_outbound_message",
+        _channel_send_like_production,
+    )
+
+    stats = await PersonalReminderProcessorService(async_session).process_due_reminders()
+    assert stats == {"processed": 1, "sent": 1, "failed": 0}
+    assert sent == {
+        "to": "holder@example.com",
+        "subject": "Interview Reminder",
+        "text": "Please join the interview tomorrow.",
+        "html": None,
+    }
+
+    refreshed = await async_session.get(PersonalReminder, reminder.id)
+    assert refreshed is not None
+    assert refreshed.status == PERSONAL_REMINDER_STATUS_SENT
+
+
 @pytest.mark.asyncio
 async def test_due_selection_uses_db_now_not_python_utc(async_session, monkeypatch):
     """Local wall-clock scheduled_at must be selected when due vs application/DB now.
@@ -446,3 +512,126 @@ async def test_due_selection_uses_db_now_not_python_utc(async_session, monkeypat
     assert refreshed is not None
     assert refreshed.status == PERSONAL_REMINDER_STATUS_SENT
     assert refreshed.sent_at == app_now
+
+
+@pytest.mark.asyncio
+async def test_multi_channel_resolves_channel_specific_content(async_session, monkeypatch):
+    """Selecting one definition must not reuse WhatsApp body for In-App."""
+    org = await seed_org(async_session)
+    user = await seed_user(async_session, organization_id=org.id, email="priya@example.com")
+    now = utcnow_naive()
+    definition_name = "Interview Reminder"
+
+    wa_template = ReminderTemplate(
+        id=uuid4(),
+        organization_id=org.id,
+        created_by=user.id,
+        name=definition_name,
+        channel="whatsapp",
+        body="Hi {{1}}, this is {{2}} on {{3}}. — {{4}}",
+        variables=[],
+        is_active=True,
+        whatsapp_template_name="policy_renewal_reminder",
+        approval_status="approved",
+        created_at=now,
+        updated_at=now,
+    )
+    in_app_template = ReminderTemplate(
+        id=uuid4(),
+        organization_id=org.id,
+        created_by=user.id,
+        name=definition_name,
+        channel="in_app",
+        title="Interview",
+        body="Hi {customer_name}, your interview reminder is ready.",
+        variables=["customer_name"],
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    async_session.add_all([wa_template, in_app_template])
+    await async_session.commit()
+
+    # Store WhatsApp variant id (as users often did before) — resolution is by name.
+    reminder = await _seed_personal_reminder(
+        async_session,
+        org_id=org.id,
+        user_id=user.id,
+        channels=["whatsapp", "in_app"],
+        whatsapp_number="+919876543210",
+        email=None,
+        template_id=wa_template.id,
+        custom_message=None,
+        title="Interview Reminder",
+    )
+
+    captured: list[dict[str, object]] = []
+
+    async def _ok_send(self, **kwargs):
+        captured.append(dict(kwargs))
+        return SimpleNamespace(status="sent", external_provider_message_id="msg-1")
+
+    monkeypatch.setattr(
+        "app.services.personal_reminder_processor.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    stats = await PersonalReminderProcessorService(async_session).process_due_reminders()
+    assert stats == {"processed": 1, "sent": 1, "failed": 0}
+    assert len(captured) == 2
+
+    by_channel = {str(item["channel"]): item for item in captured}
+    assert by_channel["whatsapp"]["template_name"] == "policy_renewal_reminder"
+    assert by_channel["whatsapp"]["template_variables"]["customer_name"] == "Priya"
+
+    in_app_text = str(by_channel["in_app"]["text"])
+    assert "{{1}}" not in in_app_text
+    assert "{{2}}" not in in_app_text
+    assert in_app_text == "Hi Priya, your interview reminder is ready."
+    assert by_channel["in_app"]["connection_settings"]["title"] == "Interview"
+
+
+@pytest.mark.asyncio
+async def test_missing_channel_variant_fails(async_session, monkeypatch):
+    org = await seed_org(async_session)
+    user = await seed_user(async_session, organization_id=org.id)
+    now = utcnow_naive()
+    template = ReminderTemplate(
+        id=uuid4(),
+        organization_id=org.id,
+        created_by=user.id,
+        name="WA Only",
+        channel="whatsapp",
+        body="Hi {{1}}",
+        variables=[],
+        is_active=True,
+        whatsapp_template_name="policy_renewal_reminder",
+        approval_status="approved",
+        created_at=now,
+        updated_at=now,
+    )
+    async_session.add(template)
+    await async_session.commit()
+
+    await _seed_personal_reminder(
+        async_session,
+        org_id=org.id,
+        user_id=user.id,
+        channels=["whatsapp", "in_app"],
+        whatsapp_number="+919876543210",
+        email=None,
+        template_id=template.id,
+        custom_message=None,
+    )
+
+    async def _ok_send(self, **kwargs):
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.personal_reminder_processor.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    stats = await PersonalReminderProcessorService(async_session).process_due_reminders()
+    assert stats["failed"] == 1
+    assert stats["sent"] == 0

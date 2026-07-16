@@ -49,6 +49,7 @@ export async function getReminderModuleConfig(module: ReminderModuleKey): Promis
     triggers: [...dateTriggers, ...workflowTriggers],
     supportedChannels: schema.supported_channels ?? [],
     defaultTemplate: schema.default_template ?? null,
+    stopConditions: schema.stop_conditions ?? [],
     supportsDate: summary?.supports_date ?? dateTriggers.length > 0,
     supportsWorkflow: summary?.supports_workflow ?? workflowTriggers.length > 0,
   };
@@ -60,4 +61,21 @@ export function resolveTriggerLabel(
   fallback = triggerKey
 ): string {
   return config?.triggers.find((item) => item.key === triggerKey)?.label ?? fallback;
+}
+
+/** Combobox items for Trigger dropdowns (Create Reminder + Claims Settings). */
+export function toTriggerComboboxItems(
+  config: ReminderModuleConfig | null | undefined
+): Array<{ value: string; label: string }> {
+  return (config?.triggers ?? []).map((item) => ({
+    value: item.key,
+    label: item.label,
+  }));
+}
+
+export function findModuleTrigger(
+  config: ReminderModuleConfig | null | undefined,
+  triggerKey: string
+) {
+  return config?.triggers.find((item) => item.key === triggerKey) ?? null;
 }

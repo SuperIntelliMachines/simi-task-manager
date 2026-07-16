@@ -12,11 +12,26 @@ from app.models.reminder_template import (
     WHATSAPP_APPROVAL_DRAFT,
     ReminderTemplate,
 )
-from app.schemas.reminder_template import ReminderTemplateCreate, ReminderTemplateUpdate
+from app.schemas.reminder_template import (
+    ReminderTemplateCreate,
+    ReminderTemplateDefinitionResponse,
+    ReminderTemplateUpdate,
+)
+
+# Prefer a stable representative id when grouping channel variants by name.
+_CHANNEL_PRIORITY = ("in_app", "email", "sms", "telegram", "whatsapp")
 
 
 def utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _channel_sort_key(channel: str) -> tuple[int, str]:
+    normalized = (channel or "").strip().lower()
+    try:
+        return (_CHANNEL_PRIORITY.index(normalized), normalized)
+    except ValueError:
+        return (len(_CHANNEL_PRIORITY), normalized)
 
 
 class ReminderTemplateService:
@@ -159,6 +174,98 @@ class ReminderTemplateService:
         row = await self.get_template(organization_id=organization_id, template_id=template_id)
         await self.session.delete(row)
         await self.session.flush()
+
+    async def list_definitions(
+        self,
+        *,
+        organization_id: int,
+        is_active: bool | None = True,
+    ) -> list[ReminderTemplateDefinitionResponse]:
+        """Group channel-specific template rows into logical definitions by name.
+
+        Same display name across channels = one selectable reminder definition.
+        """
+        filters = [ReminderTemplate.organization_id == int(organization_id)]
+        if is_active is not None:
+            filters.append(ReminderTemplate.is_active.is_(is_active))
+
+        rows = list(
+            (
+                await self.session.execute(
+                    select(ReminderTemplate)
+                    .where(*filters)
+                    .order_by(ReminderTemplate.name.asc(), ReminderTemplate.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        grouped: dict[str, list[ReminderTemplate]] = {}
+        for row in rows:
+            key = (row.name or "").strip()
+            if not key:
+                continue
+            grouped.setdefault(key, []).append(row)
+
+        definitions: list[ReminderTemplateDefinitionResponse] = []
+        for name in sorted(grouped.keys(), key=lambda value: value.casefold()):
+            variants = grouped[name]
+            variants_sorted = sorted(
+                variants,
+                key=lambda row: (
+                    _channel_sort_key(str(row.channel)),
+                    row.created_at or utcnow_naive(),
+                    str(row.id),
+                ),
+            )
+            channels = sorted(
+                {(row.channel or "").strip().lower() for row in variants_sorted if row.channel},
+                key=_channel_sort_key,
+            )
+            template_ids = [row.id for row in variants_sorted]
+            representative = variants_sorted[0]
+            definitions.append(
+                ReminderTemplateDefinitionResponse(
+                    id=representative.id,
+                    name=name,
+                    channels=channels,
+                    template_ids=template_ids,
+                    is_active=all(bool(row.is_active) for row in variants_sorted),
+                )
+            )
+        return definitions
+
+    async def find_channel_variant(
+        self,
+        *,
+        organization_id: int,
+        definition_name: str,
+        channel: str,
+        require_active: bool = True,
+    ) -> ReminderTemplate | None:
+        """Resolve the channel-specific template row for a logical definition name."""
+        name = (definition_name or "").strip()
+        channel_key = (channel or "").strip().lower()
+        if not name or not channel_key:
+            return None
+
+        filters = [
+            ReminderTemplate.organization_id == int(organization_id),
+            ReminderTemplate.name == name,
+            ReminderTemplate.channel == channel_key,
+        ]
+        if require_active:
+            filters.append(ReminderTemplate.is_active.is_(True))
+
+        return (
+            await self.session.execute(
+                select(ReminderTemplate)
+                .where(*filters)
+                .order_by(ReminderTemplate.updated_at.desc(), ReminderTemplate.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
 
     async def _get_owned(
         self,

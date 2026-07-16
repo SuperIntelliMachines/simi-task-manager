@@ -152,7 +152,9 @@ export function InsuranceDatePicker({
   labelClassName = "text-sm text-slate-700 dark:text-slate-300 mb-2",
 }: InsuranceDatePickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<"below" | "above">("below");
   const [visibleMonth, setVisibleMonth] = useState<Date>(() => clampVisibleMonth(new Date()));
   const [monthYearPickerOpen, setMonthYearPickerOpen] = useState(false);
   const errorId = `${label.replace(/\s+/g, "-").toLowerCase()}-error`;
@@ -185,6 +187,38 @@ export function InsuranceDatePicker({
     setVisibleMonth(clampVisibleMonth(initialMonth));
     setMonthYearPickerOpen(false);
   }, [open, selectedDate]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function updatePlacement() {
+      const trigger = containerRef.current;
+      const popup = popupRef.current;
+      if (!trigger) return;
+
+      const rect = trigger.getBoundingClientRect();
+      const popupHeight = popup?.offsetHeight ?? 320;
+      const gap = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - gap;
+      const spaceAbove = rect.top - gap;
+
+      if (spaceBelow < popupHeight && spaceAbove > spaceBelow) {
+        setPlacement("above");
+      } else {
+        setPlacement("below");
+      }
+    }
+
+    // Measure after paint so popup height is accurate.
+    const frame = window.requestAnimationFrame(updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    window.addEventListener("resize", updatePlacement);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", updatePlacement, true);
+      window.removeEventListener("resize", updatePlacement);
+    };
+  }, [open, monthYearPickerOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -278,9 +312,12 @@ export function InsuranceDatePicker({
 
         {open ? (
           <div
+            ref={popupRef}
             role="dialog"
             aria-label={`${label} calendar`}
-            className="insurance-day-picker-popup"
+            className={`insurance-day-picker-popup${
+              placement === "above" ? " insurance-day-picker-popup--above" : ""
+            }`}
           >
             {monthYearPickerOpen ? (
               <InsuranceMonthYearPicker

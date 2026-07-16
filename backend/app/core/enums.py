@@ -29,3 +29,18 @@ class ReminderOffsetDirection(str, Enum):
 
 # Generic default key for DATE anchors — resolvers map this to the entity's primary datetime.
 DEFAULT_REMINDER_ANCHOR_KEY = "anchor_date"
+
+
+class ReminderStopCondition(str, Enum):
+    """Generic stop conditions evaluated by the engine and/or module resolvers."""
+
+    NEVER = "never"
+    ENTITY_INELIGIBLE = "entity_ineligible"
+    WORKFLOW_STATUS_CHANGED = "workflow_status_changed"
+    END_DATE_REACHED = "end_date_reached"
+    MAX_ATTEMPTS_REACHED = "max_attempts_reached"
+
+
+DEFAULT_REMINDER_STOP_CONDITION = ReminderStopCondition.ENTITY_INELIGIBLE.value
+
+REMINDER_OFFSET_UNITS = frozenset({"hours", "days", "weeks", "months"})

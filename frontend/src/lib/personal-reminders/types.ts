@@ -62,13 +62,31 @@ export type PersonalReminderListFilters = {
   pageSize: number;
 };
 
+/** UI schedule mode on Create Reminder — One Time uses date/time; Relative uses offset config. */
+export type PersonalReminderTriggerType = "one_time" | "relative";
+
 export type PersonalReminderDraft = {
   title: string;
-  description: string;
-  /** YYYY-MM-DD */
+  /** YYYY-MM-DD — used when triggerType is one_time */
   reminderDate: string;
-  /** HH:mm */
+  /** HH:mm — used when triggerType is one_time */
   reminderTime: string;
+  /** one_time = personal absolute schedule; relative = module offset / recurrence */
+  triggerType: PersonalReminderTriggerType;
+  /** Reminder engine module_key when triggerType is relative (from metadata). */
+  moduleKey: string;
+  /** Module trigger field / workflow event key when relative. */
+  triggerKey: string;
+  /** date | workflow — mirrors module trigger kind. */
+  triggerKind: "date" | "workflow";
+  offsetValue: number;
+  offsetUnit: "hours" | "days" | "weeks" | "months";
+  offsetDirection: "before" | "after";
+  repeatEnabled: boolean;
+  repeatFrequencyValue: number;
+  repeatFrequencyUnit: "hours" | "days" | "weeks" | "months";
+  maxAttempts: number | null;
+  stopCondition: string;
   channels: string[];
   email: string;
   mobileNumber: string;

@@ -62,3 +62,17 @@ export type ReminderTemplateListResponse = {
   limit: number;
   offset: number;
 };
+
+/** Logical definition: one name spanning channel-specific template rows. */
+export type ReminderTemplateDefinition = {
+  id: string;
+  name: string;
+  channels: string[];
+  template_ids: string[];
+  is_active: boolean;
+};
+
+export type ReminderTemplateDefinitionListResponse = {
+  items: ReminderTemplateDefinition[];
+  total: number;
+};

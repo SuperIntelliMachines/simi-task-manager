@@ -1,4 +1,5 @@
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -15,8 +16,10 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 from app.core.enums import (
     DEFAULT_REMINDER_ANCHOR_KEY,
+    DEFAULT_REMINDER_STOP_CONDITION,
     ReminderAnchorType,
     ReminderOffsetDirection,
+    ReminderStopCondition,
 )
 
 
@@ -44,6 +47,14 @@ class ReminderConfig(Base):
             "length(trim(anchor_key)) > 0",
             name="ck_reminder_configs_anchor_key_nonempty",
         ),
+        CheckConstraint(
+            f"stop_condition IN ('{ReminderStopCondition.NEVER.value}', "
+            f"'{ReminderStopCondition.ENTITY_INELIGIBLE.value}', "
+            f"'{ReminderStopCondition.WORKFLOW_STATUS_CHANGED.value}', "
+            f"'{ReminderStopCondition.END_DATE_REACHED.value}', "
+            f"'{ReminderStopCondition.MAX_ATTEMPTS_REACHED.value}')",
+            name="ck_reminder_configs_stop_condition",
+        ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -70,6 +81,7 @@ class ReminderConfig(Base):
         server_default=DEFAULT_REMINDER_ANCHOR_KEY,
     )
 
+    # Trigger offset relative to the resolved anchor (API alias: trigger_offset_*).
     offset_value = Column(Integer, nullable=False)
     offset_unit = Column(String(20), nullable=False, default="days")
     # BEFORE preserves historical Insurance behavior (send N units before the anchor).
@@ -79,6 +91,18 @@ class ReminderConfig(Base):
         default=ReminderOffsetDirection.BEFORE.value,
         server_default=ReminderOffsetDirection.BEFORE.value,
     )
+
+    repeat_enabled = Column(Boolean, nullable=False, default=False, server_default="0")
+    repeat_frequency_value = Column(Integer, nullable=True)
+    repeat_frequency_unit = Column(String(20), nullable=True)
+    max_attempts = Column(Integer, nullable=True)
+    stop_condition = Column(
+        String(50),
+        nullable=False,
+        default=DEFAULT_REMINDER_STOP_CONDITION,
+        server_default=DEFAULT_REMINDER_STOP_CONDITION,
+    )
+    stop_condition_config = Column(JSON, nullable=True)
 
     time_of_day = Column(Time, nullable=True)
     absolute_scheduled_at = Column(DateTime, nullable=True)

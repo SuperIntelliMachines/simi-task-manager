@@ -79,7 +79,7 @@ export const reminderManagementApi = {
     throw new Error("Custom reminder templates are not available yet.");
   },
 
-  /** Execution history is not part of general reminder definitions. */
+  /** @deprecated Prefer reminderHistoryApi — kept for callers not yet migrated. */
   async listHistory(_filters?: Partial<ReminderHistoryFilters>): Promise<ReminderHistoryEntry[]> {
     return [];
   },

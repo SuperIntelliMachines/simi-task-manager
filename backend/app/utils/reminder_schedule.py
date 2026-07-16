@@ -126,3 +126,18 @@ def scheduled_at_for_absolute_config(*, absolute_scheduled_at: datetime) -> date
     if normalized is None:
         raise ValueError("scheduled_at is required for absolute reminders")
     return normalized
+
+
+def next_recurrence_at(
+    *,
+    from_time: datetime,
+    frequency_value: int,
+    frequency_unit: str,
+) -> datetime:
+    """Compute the next recurrence instant after ``from_time``."""
+    return scheduled_at_for_offset(
+        anchor_date=from_time,
+        offset_value=int(frequency_value),
+        offset_unit=frequency_unit,
+        offset_direction=ReminderOffsetDirection.AFTER.value,
+    )

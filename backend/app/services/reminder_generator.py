@@ -26,6 +26,7 @@ from app.utils.reminder_schedule import (
     scheduled_at_for_absolute_config,
     scheduled_at_for_relative_config,
 )
+from app.utils.reminder_recurrence import count_sent_instances, has_pending_instance
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,22 @@ class ReminderGeneratorService:
             anchor_date=anchor_date,
             config=config,
         )
+
+        if bool(getattr(config, "repeat_enabled", False)):
+            if await has_pending_instance(
+                self.session,
+                config_id=int(config.id),
+                entity_id=int(entity_id),
+            ):
+                return None
+            sent_count = await count_sent_instances(
+                self.session,
+                config_id=int(config.id),
+                entity_id=int(entity_id),
+            )
+            if sent_count > 0:
+                return None
+
         if await self._instance_exists(config_id=config.id, scheduled_at=scheduled_at):
             return None
 
