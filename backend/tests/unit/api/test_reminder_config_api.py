@@ -500,3 +500,147 @@ async def test_invalid_anchor_fields_rejected(authed_async_client):
         },
     )
     assert bad_direction.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_template_variables_create_get_and_patch(authed_async_client, async_session):
+    client, headers, org_id = authed_async_client
+    variables = {
+        "customer_name": "John",
+        "entity_label": "Health Renewal",
+        "sender_name": "ABC Insurance",
+    }
+
+    create_response = await client.post(
+        "/api/v1/reminders/config",
+        headers=headers,
+        json={
+            "organization_id": org_id,
+            "entity_type": "policy",
+            "entity_id": 9101,
+            "template_variables": variables,
+            "reminders": [
+                {
+                    "offset_value": 7,
+                    "offset_unit": "days",
+                    "time_of_day": "10:00",
+                    "channels": ["whatsapp"],
+                }
+            ],
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()["configs"]
+    assert len(created) == 1
+    assert created[0]["template_variables"] == variables
+    config_id = created[0]["config_id"]
+
+    get_response = await client.get(
+        f"/api/v1/reminders/config/policy/9101?organization_id={org_id}",
+        headers=headers,
+    )
+    assert get_response.status_code == 200
+    listed = get_response.json()["configs"]
+    assert len(listed) == 1
+    assert listed[0]["template_variables"] == variables
+
+    claims_variables = {"claim_number": "CLM1001", "surveyor": "Ravi"}
+    patch_response = await client.patch(
+        f"/api/v1/reminders/config/{config_id}",
+        headers=headers,
+        json={"template_variables": claims_variables, "channels": ["whatsapp"]},
+    )
+    assert patch_response.status_code == 200
+    assert patch_response.json()["template_variables"] == claims_variables
+
+    row = await async_session.get(ReminderConfig, config_id)
+    assert row is not None
+    assert row.template_variables == claims_variables
+
+    # Omitting template_variables keeps existing APIs backward compatible (defaults to {}).
+    omit_response = await client.post(
+        "/api/v1/reminders/config",
+        headers=headers,
+        json={
+            "organization_id": org_id,
+            "entity_type": "policy",
+            "entity_id": 9102,
+            "reminders": [
+                {"offset_value": 1, "offset_unit": "days", "channels": ["email"]},
+            ],
+        },
+    )
+    assert omit_response.status_code == 200
+    assert omit_response.json()["configs"][0]["template_variables"] == {}
+
+
+@pytest.mark.asyncio
+async def test_recipient_data_create_get_and_patch(authed_async_client, async_session):
+    client, headers, org_id = authed_async_client
+    recipient_data = {
+        "phone": "+919876543210",
+        "email": "john@example.com",
+        "telegram_chat_id": "123456789",
+        "whatsapp": "+919876543210",
+    }
+
+    create_response = await client.post(
+        "/api/v1/reminders/config",
+        headers=headers,
+        json={
+            "organization_id": org_id,
+            "entity_type": "policy",
+            "entity_id": 9201,
+            "recipient_data": recipient_data,
+            "reminders": [
+                {
+                    "offset_value": 7,
+                    "offset_unit": "days",
+                    "time_of_day": "10:00",
+                    "channels": ["whatsapp", "email"],
+                }
+            ],
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()["configs"]
+    assert len(created) == 1
+    assert created[0]["recipient_data"] == recipient_data
+    config_id = created[0]["config_id"]
+
+    get_response = await client.get(
+        f"/api/v1/reminders/config/policy/9201?organization_id={org_id}",
+        headers=headers,
+    )
+    assert get_response.status_code == 200
+    listed = get_response.json()["configs"]
+    assert len(listed) == 1
+    assert listed[0]["recipient_data"] == recipient_data
+
+    updated_recipient_data = {"email": "support@company.com"}
+    patch_response = await client.patch(
+        f"/api/v1/reminders/config/{config_id}",
+        headers=headers,
+        json={"recipient_data": updated_recipient_data, "channels": ["whatsapp", "email"]},
+    )
+    assert patch_response.status_code == 200
+    assert patch_response.json()["recipient_data"] == updated_recipient_data
+
+    row = await async_session.get(ReminderConfig, config_id)
+    assert row is not None
+    assert row.recipient_data == updated_recipient_data
+
+    omit_response = await client.post(
+        "/api/v1/reminders/config",
+        headers=headers,
+        json={
+            "organization_id": org_id,
+            "entity_type": "policy",
+            "entity_id": 9202,
+            "reminders": [
+                {"offset_value": 1, "offset_unit": "days", "channels": ["email"]},
+            ],
+        },
+    )
+    assert omit_response.status_code == 200
+    assert omit_response.json()["configs"][0]["recipient_data"] == {}

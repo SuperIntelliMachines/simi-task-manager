@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, time
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,6 +139,8 @@ class ReminderConfigService:
         template_key: str | None,
         entity_label: str | None,
         sender_name: str | None,
+        template_variables: dict[str, Any] | None,
+        recipient_data: dict[str, Any] | None,
         dnd_start: time | None,
         dnd_end: time | None,
         repeat_enabled: bool,
@@ -149,6 +152,8 @@ class ReminderConfigService:
         now: datetime,
         synced: list[ReminderConfig],
     ) -> None:
+        resolved_template_variables = dict(template_variables or {})
+        resolved_recipient_data = dict(recipient_data or {})
         existing = await self._find_config(
             organization_id=organization_id,
             entity_type=entity_type,
@@ -170,6 +175,10 @@ class ReminderConfigService:
                 existing.sender_name = sender_name
             if template_key is not None:
                 existing.template_key = template_key
+            if template_variables is not None:
+                existing.template_variables = resolved_template_variables
+            if recipient_data is not None:
+                existing.recipient_data = resolved_recipient_data
             existing.dnd_start = dnd_start
             existing.dnd_end = dnd_end
             existing.offset_value = offset_value
@@ -197,6 +206,8 @@ class ReminderConfigService:
             template_key=template_key,
             entity_label=entity_label,
             sender_name=sender_name,
+            template_variables=resolved_template_variables,
+            recipient_data=resolved_recipient_data,
             anchor_type=anchor_type,
             anchor_key=anchor_key,
             offset_direction=offset_direction,
@@ -229,6 +240,8 @@ class ReminderConfigService:
         template_key: str | None = None,
         entity_label: str | None = None,
         sender_name: str | None = None,
+        template_variables: dict[str, Any] | None = None,
+        recipient_data: dict[str, Any] | None = None,
         dnd_start: time | None = None,
         dnd_end: time | None = None,
         commit: bool = True,
@@ -318,6 +331,8 @@ class ReminderConfigService:
                     template_key=template_key,
                     entity_label=entity_label,
                     sender_name=sender_name,
+                    template_variables=template_variables,
+                    recipient_data=recipient_data,
                     dnd_start=dnd_start,
                     dnd_end=dnd_end,
                     repeat_enabled=repeat_enabled,
@@ -366,6 +381,8 @@ class ReminderConfigService:
         template_key: str | None = None,
         entity_label: str | None = None,
         sender_name: str | None = None,
+        template_variables: dict[str, Any] | None = None,
+        recipient_data: dict[str, Any] | None = None,
         dnd_start: time | None = None,
         dnd_end: time | None = None,
         commit: bool = True,
@@ -421,6 +438,8 @@ class ReminderConfigService:
             template_key=template_key,
             entity_label=entity_label,
             sender_name=sender_name,
+            template_variables=template_variables,
+            recipient_data=recipient_data,
             dnd_start=dnd_start,
             dnd_end=dnd_end,
             commit=commit,
@@ -495,6 +514,8 @@ class ReminderConfigService:
         template_key: str | None = None,
         entity_label: str | None = None,
         sender_name: str | None = None,
+        template_variables: dict[str, Any] | None = None,
+        recipient_data: dict[str, Any] | None = None,
         anchor_type: str | None = None,
         anchor_key: str | None = None,
         offset_direction: str | None = None,
@@ -508,6 +529,8 @@ class ReminderConfigService:
             anchor_key=anchor_key,
             offset_direction=offset_direction,
         )
+        resolved_template_variables = dict(template_variables or {})
+        resolved_recipient_data = dict(recipient_data or {})
 
         for offset_value in offsets:
             existing = await self._find_active_duplicate(
@@ -531,6 +554,8 @@ class ReminderConfigService:
                 template_key=template_key,
                 entity_label=entity_label,
                 sender_name=sender_name,
+                template_variables=resolved_template_variables,
+                recipient_data=resolved_recipient_data,
                 anchor_type=resolved_anchor_type,
                 anchor_key=resolved_anchor_key,
                 offset_direction=resolved_offset_direction,
@@ -651,6 +676,8 @@ class ReminderConfigService:
                         row, "stop_condition", DEFAULT_REMINDER_STOP_CONDITION
                     ),
                     "stop_condition_config": getattr(row, "stop_condition_config", None),
+                    "template_variables": dict(getattr(row, "template_variables", None) or {}),
+                    "recipient_data": dict(getattr(row, "recipient_data", None) or {}),
                     "time_of_day": row.time_of_day,
                     "channels": [],
                     "is_active": row.is_active,
@@ -681,6 +708,12 @@ class ReminderConfigService:
             updates.setdefault("offset_value", 0)
             updates.setdefault("offset_unit", "days")
             updates["time_of_day"] = None
+
+        if "template_variables" in updates:
+            updates["template_variables"] = dict(updates.get("template_variables") or {})
+
+        if "recipient_data" in updates:
+            updates["recipient_data"] = dict(updates.get("recipient_data") or {})
 
         if any(key in updates for key in ("anchor_type", "anchor_key", "offset_direction")):
             anchor_type, anchor_key, offset_direction = validate_anchor_fields(
@@ -748,6 +781,12 @@ class ReminderConfigService:
             updates.setdefault("offset_unit", "days")
             updates["time_of_day"] = None
 
+        if "template_variables" in updates:
+            updates["template_variables"] = dict(updates.get("template_variables") or {})
+
+        if "recipient_data" in updates:
+            updates["recipient_data"] = dict(updates.get("recipient_data") or {})
+
         if any(key in updates for key in ("anchor_type", "anchor_key", "offset_direction")):
             anchor_type, anchor_key, offset_direction = validate_anchor_fields(
                 anchor_type=updates.get("anchor_type", target.anchor_type),
@@ -799,6 +838,18 @@ class ReminderConfigService:
                 )
             )
             existing_by_channel = {row.channel: row for row in list(existing_by_channel_result.scalars())}
+            desired_template_variables = updates.get(
+                "template_variables",
+                getattr(target, "template_variables", None) or {},
+            )
+            if not isinstance(desired_template_variables, dict):
+                desired_template_variables = {}
+            desired_recipient_data = updates.get(
+                "recipient_data",
+                getattr(target, "recipient_data", None) or {},
+            )
+            if not isinstance(desired_recipient_data, dict):
+                desired_recipient_data = {}
 
             for channel in normalized_channels:
                 existing = existing_by_channel.get(channel)
@@ -806,6 +857,8 @@ class ReminderConfigService:
                     existing.is_active = desired_is_active
                     existing.entity_label = target.entity_label
                     existing.sender_name = target.sender_name
+                    existing.template_variables = dict(desired_template_variables)
+                    existing.recipient_data = dict(desired_recipient_data)
                     existing.offset_value = desired_offset_value
                     existing.offset_unit = desired_offset_unit
                     existing.time_of_day = desired_time_of_day
@@ -825,6 +878,8 @@ class ReminderConfigService:
                     template_key=target.template_key,
                     entity_label=target.entity_label,
                     sender_name=target.sender_name,
+                    template_variables=dict(desired_template_variables),
+                    recipient_data=dict(desired_recipient_data),
                     anchor_type=desired_anchor_type,
                     anchor_key=desired_anchor_key,
                     offset_direction=desired_offset_direction,

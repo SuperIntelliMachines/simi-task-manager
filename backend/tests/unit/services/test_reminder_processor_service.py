@@ -65,6 +65,8 @@ async def _add_due_instance(
     channel: str = "whatsapp",
     scheduled_at: datetime | None = None,
     attempt_count: int = 0,
+    recipient_data: dict | None = None,
+    template_variables: dict | None = None,
 ) -> ReminderInstance:
     config = ReminderConfig(
         organization_id=org_id,
@@ -75,6 +77,8 @@ async def _add_due_instance(
         offset_value=1,
         offset_unit="days",
         is_active=True,
+        recipient_data=recipient_data or {},
+        template_variables=template_variables or {},
     )
     async_session.add(config)
     await async_session.flush()
@@ -457,6 +461,191 @@ async def test_process_due_reminders_uses_db_now_when_app_utc_is_stale(async_ses
     assert refreshed is not None
     assert refreshed.status == "SENT"
     assert refreshed.sent_at == db_now
+
+
+@pytest.mark.asyncio
+async def test_recipient_data_overrides_resolver_for_whatsapp(async_session, monkeypatch):
+    """When recipient_data is present, WhatsApp uses recipient_data['whatsapp']."""
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id, mobile_number="+919876543210")
+    await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel="whatsapp",
+        recipient_data={
+            "whatsapp": "+910000000001",
+            "phone": "+910000000002",
+            "email": "override@example.com",
+            "telegram_chat_id": "555",
+        },
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _ok_send(self, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured["recipient"] == "+910000000001"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "channel,recipient_data,expected",
+    [
+        ("sms", {"phone": "+910000000002"}, "+910000000002"),
+        ("email", {"email": "john@example.com"}, "john@example.com"),
+        ("telegram", {"telegram_chat_id": "123456789"}, "123456789"),
+    ],
+)
+async def test_recipient_data_channel_mapping(
+    async_session, monkeypatch, channel, recipient_data, expected
+):
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id)
+    await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel=channel,
+        recipient_data=recipient_data,
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _ok_send(self, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured["recipient"] == expected
+
+
+@pytest.mark.asyncio
+async def test_recipient_data_empty_falls_back_to_resolver(async_session, monkeypatch):
+    """Empty recipient_data preserves the existing resolver recipient behavior."""
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id, mobile_number="+919876543210")
+    await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel="whatsapp",
+        recipient_data={},
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _ok_send(self, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured["recipient"] == "+919876543210"
+
+
+@pytest.mark.asyncio
+async def test_template_variables_override_resolver_context(async_session, monkeypatch):
+    """When config.template_variables is present, it is passed to the adapter as-is."""
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id)
+    template_variables = {
+        "customer_name": "John",
+        "entity_label": "Health Renewal",
+        "sender_name": "ABC Insurance",
+    }
+    await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel="whatsapp",
+        template_variables=template_variables,
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _ok_send(self, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured["template_variables"] == template_variables
+
+
+@pytest.mark.asyncio
+async def test_template_variables_empty_falls_back_to_resolver_context(async_session, monkeypatch):
+    """Empty template_variables preserves the resolver-built context."""
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id)
+    scheduled_at = utcnow_naive() - timedelta(minutes=5)
+    inst = await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel="whatsapp",
+        scheduled_at=scheduled_at,
+        template_variables={},
+    )
+    config = await async_session.get(ReminderConfig, inst.config_id)
+    config.entity_label = "Car Insurance Renewal"
+    config.sender_name = "ABC Insurance"
+    await async_session.commit()
+
+    captured: dict[str, object] = {}
+
+    async def _ok_send(self, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured["template_variables"] == {
+        "customer_name": "Ravi Kumar",
+        "entity_label": "Car Insurance Renewal",
+        "reminder_date": scheduled_at.strftime("%d-%m-%Y %I:%M %p"),
+        "sender_name": "ABC Insurance",
+    }
 
 
 @pytest.mark.asyncio

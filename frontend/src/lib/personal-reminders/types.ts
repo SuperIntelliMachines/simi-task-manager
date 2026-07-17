@@ -65,6 +65,18 @@ export type PersonalReminderListFilters = {
 /** UI schedule mode on Create Reminder — One Time uses date/time; Relative uses offset config. */
 export type PersonalReminderTriggerType = "one_time" | "relative";
 
+export type RelativeReminderOffsetUnit = "hours" | "days" | "weeks" | "months";
+export type RelativeReminderOffsetDirection = "before" | "after";
+
+/** One relative offset row for the same module trigger. */
+export type RelativeReminderRule = {
+  /** Client-side row id for list rendering (not persisted). */
+  id: string;
+  offsetValue: number;
+  offsetUnit: RelativeReminderOffsetUnit;
+  offsetDirection: RelativeReminderOffsetDirection;
+};
+
 export type PersonalReminderDraft = {
   title: string;
   /** YYYY-MM-DD — used when triggerType is one_time */
@@ -79,9 +91,14 @@ export type PersonalReminderDraft = {
   triggerKey: string;
   /** date | workflow — mirrors module trigger kind. */
   triggerKind: "date" | "workflow";
+  /**
+   * Relative offset rows for the selected trigger.
+   * Legacy single-offset fields below mirror the first row for compatibility.
+   */
+  relativeRules: RelativeReminderRule[];
   offsetValue: number;
-  offsetUnit: "hours" | "days" | "weeks" | "months";
-  offsetDirection: "before" | "after";
+  offsetUnit: RelativeReminderOffsetUnit;
+  offsetDirection: RelativeReminderOffsetDirection;
   repeatEnabled: boolean;
   repeatFrequencyValue: number;
   repeatFrequencyUnit: "hours" | "days" | "weeks" | "months";

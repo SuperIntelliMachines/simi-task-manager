@@ -33,9 +33,7 @@ import {
 import PersonalizedReminderBuilder from "../../components/insurance/PersonalizedReminderBuilder";
 import {
   buildApiCustomRemindersPayload,
-  DEFAULT_RENEWAL_REMINDER_CYCLE_DAYS,
   PREFERRED_CHANNEL_OPTIONS,
-  REMINDER_TYPE_OPTIONS,
   validateDoNotDisturbWindow,
   validatePersonalizedReminders,
   type CustomReminderItem,
@@ -116,7 +114,8 @@ export function CreatePolicyPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [expiryDateError, setExpiryDateError] = useState<string | null>(null);
   const [renewalFrequencyError, setRenewalFrequencyError] = useState<string | null>(null);
-  const [reminderType, setReminderType] = useState<ReminderType>("default");
+  // Unchecked by default → policy-specific (personalized) custom reminders.
+  const [reminderType, setReminderType] = useState<ReminderType>("personalized");
   const [customReminders, setCustomReminders] = useState<CustomReminderItem[]>([]);
   const [dndStart, setDndStart] = useState("21:00");
   const [dndEnd, setDndEnd] = useState("08:00");
@@ -267,7 +266,9 @@ export function CreatePolicyPage() {
         document_path,
       });
 
-      if (created?.id) {
+      // Only create per-policy reminder configs when using custom settings.
+      // Default = org-level generic rules (no policy-specific configs).
+      if (created?.id && reminderType === "personalized") {
         await savePolicyReminderSettings({
           organizationId,
           policyId: created.id,
@@ -275,8 +276,8 @@ export function CreatePolicyPage() {
           preferredChannels: form.preferred_channel,
           customReminders,
           policyType: form.policy_type || null,
-          dndStart: reminderType === "personalized" ? dndStart : null,
-          dndEnd: reminderType === "personalized" ? dndEnd : null,
+          dndStart: dndStart,
+          dndEnd: dndEnd,
         });
       }
 
@@ -522,29 +523,23 @@ export function CreatePolicyPage() {
                   ) : null}
                 </div>
 
-                <label className="block">
-                  <span className={labelClassName}>Reminder Type</span>
-                  <div className="w-full sm:w-[280px] md:w-[320px]">
-                    <Combobox
-                      items={REMINDER_TYPE_OPTIONS}
-                      value={reminderType}
-                      onChange={(value) => {
-                        if (!value) return;
-                        setRemindersError(null);
-                        setDndError(null);
-                        setReminderType(value as ReminderType);
-                      }}
-                      placeholder="Select reminder type"
-                      searchable={false}
-                      className={comboboxClassName}
-                    />
-                  </div>
+                <label className="inline-flex cursor-pointer items-center gap-3 text-sm font-medium text-gray-800 dark:text-slate-200">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded accent-[#14B8A6]"
+                    checked={reminderType === "default"}
+                    onChange={(event) => {
+                      setRemindersError(null);
+                      setDndError(null);
+                      setReminderType(event.target.checked ? "default" : "personalized");
+                    }}
+                  />
+                  Use Default Reminder Configuration
                 </label>
 
                 {reminderType === "default" ? (
                   <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-500">
-                    Uses the system renewal reminder cycle:{" "}
-                    {DEFAULT_RENEWAL_REMINDER_CYCLE_DAYS.join(", ")} days before renewal.
+                    This policy will use the organization&apos;s default reminder configuration.
                   </p>
                 ) : (
                   <PersonalizedReminderBuilder

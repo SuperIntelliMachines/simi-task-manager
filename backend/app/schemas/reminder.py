@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -99,6 +100,9 @@ class ReminderConfigCreateBody(BaseModel):
     template_key: str | None = None
     entity_label: str | None = None
     sender_name: str | None = None
+    # Any JSON object — keys differ by module (Insurance, Claims, Inventory, CRM, …).
+    template_variables: dict[str, Any] | None = Field(default_factory=dict)
+    recipient_data: dict[str, Any] | None = Field(default_factory=dict)
     dnd_start: time | None = None
     dnd_end: time | None = None
     # True (default): Settings-style replace. False: append without deactivating siblings.
@@ -143,6 +147,24 @@ class ReminderConfigCreateBody(BaseModel):
         if normalized not in {"hours", "days", "weeks", "months"}:
             raise ValueError("offset_unit must be one of: hours, days, weeks, months")
         return normalized
+
+    @field_validator("template_variables", mode="before")
+    @classmethod
+    def normalize_template_variables(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("template_variables must be a JSON object")
+        return dict(value)
+
+    @field_validator("recipient_data", mode="before")
+    @classmethod
+    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("recipient_data must be a JSON object")
+        return dict(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -209,6 +231,8 @@ class ReminderConfigResponse(BaseModel):
     template_key: str | None = None
     entity_label: str | None = None
     sender_name: str | None = None
+    template_variables: dict[str, Any] = Field(default_factory=dict)
+    recipient_data: dict[str, Any] = Field(default_factory=dict)
     anchor_type: str
     anchor_key: str
     offset_direction: str
@@ -233,6 +257,24 @@ class ReminderConfigResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("template_variables", mode="before")
+    @classmethod
+    def normalize_template_variables(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("template_variables must be a JSON object")
+        return dict(value)
+
+    @field_validator("recipient_data", mode="before")
+    @classmethod
+    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("recipient_data must be a JSON object")
+        return dict(value)
+
     @model_validator(mode="before")
     @classmethod
     def map_absolute_scheduled_at(cls, value: object) -> object:
@@ -243,6 +285,8 @@ class ReminderConfigResponse(BaseModel):
             data.setdefault("trigger_offset_value", data.get("offset_value"))
             data.setdefault("trigger_offset_unit", data.get("offset_unit"))
             data.setdefault("trigger_offset_direction", data.get("offset_direction"))
+            data.setdefault("template_variables", {})
+            data.setdefault("recipient_data", {})
             return data
         if hasattr(value, "absolute_scheduled_at"):
             return {
@@ -254,6 +298,8 @@ class ReminderConfigResponse(BaseModel):
                 "template_key": value.template_key,
                 "entity_label": value.entity_label,
                 "sender_name": value.sender_name,
+                "template_variables": getattr(value, "template_variables", None) or {},
+                "recipient_data": getattr(value, "recipient_data", None) or {},
                 "anchor_type": getattr(value, "anchor_type", ReminderAnchorType.DATE.value),
                 "anchor_key": getattr(value, "anchor_key", DEFAULT_REMINDER_ANCHOR_KEY),
                 "offset_direction": getattr(
@@ -444,6 +490,8 @@ class ReminderSettingsSaveBody(BaseModel):
     template_key: str | None = None
     entity_label: str | None = None
     sender_name: str | None = None
+    template_variables: dict[str, Any] | None = Field(default_factory=dict)
+    recipient_data: dict[str, Any] | None = Field(default_factory=dict)
     # Optional entity-level defaults applied when offsets omit anchor fields
     anchor_type: str = ReminderAnchorType.DATE.value
     anchor_key: str = DEFAULT_REMINDER_ANCHOR_KEY
@@ -463,6 +511,24 @@ class ReminderSettingsSaveBody(BaseModel):
     @classmethod
     def validate_channels(cls, value: list[str]) -> list[str]:
         return [(channel or "").strip().lower() for channel in value if (channel or "").strip()]
+
+    @field_validator("template_variables", mode="before")
+    @classmethod
+    def normalize_template_variables(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("template_variables must be a JSON object")
+        return dict(value)
+
+    @field_validator("recipient_data", mode="before")
+    @classmethod
+    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("recipient_data must be a JSON object")
+        return dict(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -529,9 +595,29 @@ class ReminderConfigGroupResponse(BaseModel):
     max_attempts: int | None = None
     stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
     stop_condition_config: dict[str, object] | None = None
+    template_variables: dict[str, Any] = Field(default_factory=dict)
+    recipient_data: dict[str, Any] = Field(default_factory=dict)
     time_of_day: time | None = None
     channels: list[str] = Field(default_factory=list)
     is_active: bool
+
+    @field_validator("template_variables", mode="before")
+    @classmethod
+    def normalize_template_variables(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("template_variables must be a JSON object")
+        return dict(value)
+
+    @field_validator("recipient_data", mode="before")
+    @classmethod
+    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("recipient_data must be a JSON object")
+        return dict(value)
 
 
 class ReminderConfigGroupListResponse(BaseModel):
@@ -557,6 +643,8 @@ class ReminderConfigUpdateBody(BaseModel):
     max_attempts: int | None = Field(default=None, ge=1)
     stop_condition: str | None = None
     stop_condition_config: dict[str, object] | None = None
+    template_variables: dict[str, Any] | None = None
+    recipient_data: dict[str, Any] | None = None
     dnd_start: time | None = None
     dnd_end: time | None = None
     is_active: bool | None = None
@@ -599,6 +687,24 @@ class ReminderConfigUpdateBody(BaseModel):
         if not normalized:
             raise ValueError("channels must contain at least one value")
         return normalized
+
+    @field_validator("template_variables", mode="before")
+    @classmethod
+    def normalize_template_variables(cls, value: object) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("template_variables must be a JSON object")
+        return dict(value)
+
+    @field_validator("recipient_data", mode="before")
+    @classmethod
+    def normalize_recipient_data(cls, value: object) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("recipient_data must be a JSON object")
+        return dict(value)
 
     @field_validator("time_of_day", mode="before")
     @classmethod

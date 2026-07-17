@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import (
@@ -29,6 +29,10 @@ from app.utils.reminder_schedule import (
 from app.utils.reminder_recurrence import count_sent_instances, has_pending_instance
 
 logger = logging.getLogger(__name__)
+
+# Sentinel used by Generic Reminder Management / Claims settings for org-wide rules.
+# Not a real entity id — generators must fan out to all eligible entities.
+ORG_LEVEL_ENTITY_ID = 0
 
 
 class ReminderGeneratorService:
@@ -95,11 +99,13 @@ class ReminderGeneratorService:
         self,
         *,
         config_id: int,
+        entity_id: int,
         scheduled_at: datetime,
     ) -> bool:
         duplicate = await self.session.execute(
             select(ReminderInstance).where(
                 ReminderInstance.config_id == config_id,
+                ReminderInstance.entity_id == entity_id,
                 ReminderInstance.scheduled_at == scheduled_at,
             )
         )
@@ -134,7 +140,11 @@ class ReminderGeneratorService:
             if sent_count > 0:
                 return None
 
-        if await self._instance_exists(config_id=config.id, scheduled_at=scheduled_at):
+        if await self._instance_exists(
+            config_id=config.id,
+            entity_id=int(entity_id),
+            scheduled_at=scheduled_at,
+        ):
             return None
 
         instance = ReminderInstance(
@@ -147,6 +157,51 @@ class ReminderGeneratorService:
         )
         self.session.add(instance)
         return instance
+
+    async def _create_instances_for_entity_configs(
+        self,
+        *,
+        resolver: ReminderEntityResolver,
+        org_id: int,
+        entity_type: str,
+        entity: ReminderEntitySnapshot,
+        configs: list[ReminderConfig],
+    ) -> list[ReminderInstance]:
+        if not configs:
+            return []
+        if not resolver.is_eligible(entity, configs=configs):
+            return []
+
+        created: list[ReminderInstance] = []
+        entity_id = int(entity.entity_id)
+        for config in configs:
+            anchor = self._resolve_config_anchor(
+                resolver=resolver,
+                entity=entity,
+                config=config,
+            )
+            if anchor is None:
+                logger.debug(
+                    "[ReminderGenerator] unresolved anchor org=%s type=%s id=%s "
+                    "config=%s key=%s",
+                    org_id,
+                    entity_type,
+                    entity_id,
+                    config.id,
+                    getattr(config, "anchor_key", None),
+                )
+                continue
+
+            instance = await self._create_instance_for_config(
+                config=config,
+                organization_id=org_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                anchor_date=anchor,
+            )
+            if instance is not None:
+                created.append(instance)
+        return created
 
     async def generate_instances(
         self,
@@ -163,7 +218,16 @@ class ReminderGeneratorService:
         Uses the caller-supplied ``anchor_date`` for every config. Prefer
         ``generate_from_active_configs()`` when anchors should be resolved
         dynamically from ``anchor_type`` / ``anchor_key``.
+
+        Loads both entity-specific configs and org-level configs
+        (``entity_id == 0``) so regenerating one entity applies generic rules too.
         """
+        if int(entity_id) == ORG_LEVEL_ENTITY_ID:
+            raise ValueError(
+                "entity_id must be a real entity id; "
+                "use generate_from_active_configs for org-level rules"
+            )
+
         anchor = normalize_to_utc_naive(anchor_date)
         if anchor is None:
             raise ValueError("anchor_date is required")
@@ -172,8 +236,11 @@ class ReminderGeneratorService:
             select(ReminderConfig).where(
                 ReminderConfig.organization_id == organization_id,
                 ReminderConfig.entity_type == entity_type,
-                ReminderConfig.entity_id == entity_id,
                 ReminderConfig.is_active.is_(True),
+                or_(
+                    ReminderConfig.entity_id == entity_id,
+                    ReminderConfig.entity_id == ORG_LEVEL_ENTITY_ID,
+                ),
             )
         )
         configs = list(config_result.scalars())
@@ -206,11 +273,13 @@ class ReminderGeneratorService:
         """
         Discover entities from active reminder_configs via registered resolvers.
 
-        For each active config:
-        - resolve the entity through the factory
-        - resolve the config's anchor via resolver.resolve_anchor(anchor_type, anchor_key)
-        - apply offset_direction (before/after)
-        - create reminder_instances (skip duplicates)
+        Per-entity configs (``entity_id != 0``): resolve that entity and create
+        instances as before.
+
+        Org-level configs (``entity_id == 0``): one reusable rule that fans out
+        to every eligible entity returned by ``list_entities`` (plus any
+        entity-specific lookups). Instances store the real entity id; the
+        config itself stays at ``entity_id == 0``.
         """
         query = select(ReminderConfig).where(ReminderConfig.is_active.is_(True))
         if organization_id is not None:
@@ -238,19 +307,30 @@ class ReminderGeneratorService:
                 )
                 continue
 
-            configured_entity_ids = {config.entity_id for config in type_configs}
+            org_level_configs = [
+                c for c in type_configs if int(c.entity_id) == ORG_LEVEL_ENTITY_ID
+            ]
+            entity_specific_configs = [
+                c for c in type_configs if int(c.entity_id) != ORG_LEVEL_ENTITY_ID
+            ]
+
             entities_by_id: dict[int, ReminderEntitySnapshot] = {}
-
             for entity in await resolver.list_entities(self.session, org_id):
-                entities_by_id[entity.entity_id] = entity
+                if int(entity.entity_id) == ORG_LEVEL_ENTITY_ID:
+                    continue
+                entities_by_id[int(entity.entity_id)] = entity
 
-            missing_ids = configured_entity_ids - set(entities_by_id.keys())
+            # Resolve entity-specific ids missing from list_entities (never look up 0).
+            missing_ids = {
+                int(c.entity_id) for c in entity_specific_configs
+            } - set(entities_by_id.keys())
             for entity_id in missing_ids:
                 entity = await resolver.get_entity(self.session, org_id, entity_id)
-                if entity is not None:
-                    entities_by_id[entity.entity_id] = entity
+                if entity is not None and int(entity.entity_id) != ORG_LEVEL_ENTITY_ID:
+                    entities_by_id[int(entity.entity_id)] = entity
 
-            for entity_id in configured_entity_ids:
+            # 1) Per-entity configs — unchanged behavior
+            for entity_id in {int(c.entity_id) for c in entity_specific_configs}:
                 entity = entities_by_id.get(entity_id)
                 if entity is None:
                     logger.debug(
@@ -261,37 +341,33 @@ class ReminderGeneratorService:
                     )
                     continue
 
-                entity_configs = [c for c in type_configs if c.entity_id == entity_id]
-                if not resolver.is_eligible(entity, configs=entity_configs):
-                    continue
-
-                for config in entity_configs:
-                    anchor = self._resolve_config_anchor(
+                entity_configs = [
+                    c for c in entity_specific_configs if int(c.entity_id) == entity_id
+                ]
+                created.extend(
+                    await self._create_instances_for_entity_configs(
                         resolver=resolver,
-                        entity=entity,
-                        config=config,
-                    )
-                    if anchor is None:
-                        logger.debug(
-                            "[ReminderGenerator] unresolved anchor org=%s type=%s id=%s "
-                            "config=%s key=%s",
-                            org_id,
-                            entity_type,
-                            entity_id,
-                            config.id,
-                            getattr(config, "anchor_key", None),
-                        )
-                        continue
-
-                    instance = await self._create_instance_for_config(
-                        config=config,
-                        organization_id=org_id,
+                        org_id=org_id,
                         entity_type=entity_type,
-                        entity_id=entity_id,
-                        anchor_date=anchor,
+                        entity=entity,
+                        configs=entity_configs,
                     )
-                    if instance is not None:
-                        created.append(instance)
+                )
+
+            # 2) Org-level configs — fan out to all discovered eligible entities
+            if not org_level_configs:
+                continue
+
+            for entity in entities_by_id.values():
+                created.extend(
+                    await self._create_instances_for_entity_configs(
+                        resolver=resolver,
+                        org_id=org_id,
+                        entity_type=entity_type,
+                        entity=entity,
+                        configs=org_level_configs,
+                    )
+                )
 
         if created and commit:
             await self.session.commit()

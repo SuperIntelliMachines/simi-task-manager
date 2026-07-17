@@ -7,6 +7,9 @@ export type {
   PersonalReminderStatus,
   PersonalReminderTriggerType,
   PersonalReminderUpsert,
+  RelativeReminderOffsetDirection,
+  RelativeReminderOffsetUnit,
+  RelativeReminderRule,
 } from "./types";
 export {
   combineDateAndTime,

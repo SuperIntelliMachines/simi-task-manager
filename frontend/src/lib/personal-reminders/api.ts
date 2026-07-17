@@ -3,6 +3,11 @@
  */
 import { apiClient } from "../api/client";
 import { validateReminderRecipients } from "../reminder-management/recipient-fields";
+import {
+  createRelativeReminderRule,
+  syncLegacyOffsetFieldsFromRules,
+  validateRelativeReminderRules,
+} from "../reminder-management/relative-rules";
 import type {
   PersonalReminder,
   PersonalReminderDraft,
@@ -22,6 +27,20 @@ export function emptyPersonalReminderDraft(
   ].join("-");
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
+  const relativeRules =
+    defaults?.relativeRules !== undefined
+      ? defaults.relativeRules
+      : [];
+  const legacyOffsets = syncLegacyOffsetFieldsFromRules(relativeRules);
+
+  const {
+    relativeRules: _ignoredRules,
+    offsetValue: _ignoredOffsetValue,
+    offsetUnit: _ignoredOffsetUnit,
+    offsetDirection: _ignoredOffsetDirection,
+    ...restDefaults
+  } = defaults ?? {};
+
   return {
     title: "",
     reminderDate: date,
@@ -30,9 +49,6 @@ export function emptyPersonalReminderDraft(
     moduleKey: "",
     triggerKey: "",
     triggerKind: "date",
-    offsetValue: 24,
-    offsetUnit: "hours",
-    offsetDirection: "after",
     repeatEnabled: false,
     repeatFrequencyValue: 24,
     repeatFrequencyUnit: "hours",
@@ -46,7 +62,11 @@ export function emptyPersonalReminderDraft(
     templateId: "",
     customMessage: "",
     isActive: true,
-    ...defaults,
+    ...restDefaults,
+    relativeRules,
+    offsetValue: defaults?.offsetValue ?? legacyOffsets.offsetValue,
+    offsetUnit: defaults?.offsetUnit ?? legacyOffsets.offsetUnit,
+    offsetDirection: defaults?.offsetDirection ?? legacyOffsets.offsetDirection,
   };
 }
 
@@ -131,9 +151,18 @@ export function validatePersonalReminderDraft(draft: PersonalReminderDraft): str
   } else {
     if (!draft.moduleKey.trim()) return "Module is required for relative reminders.";
     if (!draft.triggerKey.trim()) return "Trigger is required for relative reminders.";
-    if (!Number.isFinite(draft.offsetValue) || draft.offsetValue < 0) {
-      return "Offset value must be zero or a positive number.";
-    }
+    const rules =
+      draft.relativeRules?.length > 0
+        ? draft.relativeRules
+        : [
+            createRelativeReminderRule({
+              offsetValue: draft.offsetValue,
+              offsetUnit: draft.offsetUnit,
+              offsetDirection: draft.offsetDirection,
+            }),
+          ];
+    const rulesError = validateRelativeReminderRules(rules);
+    if (rulesError) return rulesError;
     if (draft.repeatEnabled) {
       if (!Number.isFinite(draft.repeatFrequencyValue) || draft.repeatFrequencyValue < 1) {
         return "Repeat frequency must be at least 1 when recurring is enabled.";

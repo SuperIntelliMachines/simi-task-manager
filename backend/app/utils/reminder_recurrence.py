@@ -52,11 +52,13 @@ async def instance_exists_at(
     session: AsyncSession,
     *,
     config_id: int,
+    entity_id: int,
     scheduled_at: datetime,
 ) -> bool:
     duplicate = await session.execute(
         select(ReminderInstance.id).where(
             ReminderInstance.config_id == int(config_id),
+            ReminderInstance.entity_id == int(entity_id),
             ReminderInstance.scheduled_at == scheduled_at,
         )
     )
@@ -97,7 +99,12 @@ async def schedule_next_recurrence(
     next_at = compute_next_recurrence_at(config, from_time=from_time)
     if next_at is None:
         return None
-    if await instance_exists_at(session, config_id=int(config.id), scheduled_at=next_at):
+    if await instance_exists_at(
+        session,
+        config_id=int(config.id),
+        entity_id=int(entity_id),
+        scheduled_at=next_at,
+    ):
         return None
 
     instance = ReminderInstance(

@@ -25,6 +25,26 @@ logger = logging.getLogger(__name__)
 
 IN_APP_CHANNEL = "in_app"
 
+# Maps an outbound channel to the key it reads from reminder_config.recipient_data.
+CHANNEL_RECIPIENT_DATA_KEYS: dict[str, str] = {
+    "whatsapp": "whatsapp",
+    "sms": "phone",
+    "email": "email",
+    "telegram": "telegram_chat_id",
+    "in_app": "user_id",
+}
+
+# Extra recipient_data keys accepted for in_app (Generic Reminder / module configs).
+IN_APP_RECIPIENT_DATA_KEYS: tuple[str, ...] = (
+    "user_id",
+    "recipient_user_id",
+    "assigned_user_id",
+    "assigned_agent_user_id",
+    "owner_user_id",
+    "created_by",
+    "agent_id",
+)
+
 
 class ReminderProcessorService:
     def __init__(
@@ -185,6 +205,7 @@ class ReminderProcessorService:
                     outbound = await self._send_in_app(
                         channel_service=channel_service,
                         organization_id=organization_id,
+                        config=config,
                         instance=instance,
                         resolver=resolver,
                         entity=entity,
@@ -260,38 +281,164 @@ class ReminderProcessorService:
             "failed": failed,
         }
 
+    @staticmethod
+    def _coerce_positive_user_id(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value > 0:
+            return value
+        if isinstance(value, str) and value.strip().isdigit():
+            parsed = int(value.strip())
+            if parsed > 0:
+                return parsed
+        return None
+
+    def _recipient_user_id_from_data(self, config: ReminderConfig) -> int | None:
+        """Return an in_app user id from config.recipient_data when present."""
+        recipient_data = getattr(config, "recipient_data", None)
+        if not isinstance(recipient_data, dict) or not recipient_data:
+            return None
+        for key in IN_APP_RECIPIENT_DATA_KEYS:
+            parsed = self._coerce_positive_user_id(recipient_data.get(key))
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _resolve_in_app_user_id(
+        self,
+        *,
+        config: ReminderConfig,
+        resolver: ReminderEntityResolver,
+        entity: ReminderEntitySnapshot,
+    ) -> int | None:
+        """Prefer recipient_data; fall back to the module resolver snapshot."""
+        from_data = self._recipient_user_id_from_data(config)
+        if from_data is not None:
+            return from_data
+        return resolver.get_recipient_user_id(entity)
+
+    def _missing_in_app_user_id_error(
+        self,
+        *,
+        config: ReminderConfig,
+        entity: ReminderEntitySnapshot,
+    ) -> ValueError:
+        entity_type = (entity.entity_type or "").strip().lower() or "unknown"
+        recipient_data = getattr(config, "recipient_data", None)
+        source = entity.source
+        assigned = getattr(source, "assigned_agent_user_id", None) if source is not None else None
+
+        if entity_type == "policy":
+            return ValueError(
+                "missing recipient user id for in_app channel: "
+                f"policy id={entity.entity_id} has no assigned_agent_user_id "
+                f"(got {assigned!r}) and recipient_data has no user id "
+                f"(keys tried: {', '.join(IN_APP_RECIPIENT_DATA_KEYS)}; "
+                f"recipient_data={recipient_data!r})"
+            )
+        return ValueError(
+            "missing recipient user id for in_app channel: "
+            f"entity_type={entity_type} entity_id={entity.entity_id} "
+            "resolver did not provide recipient_user_id and recipient_data "
+            f"has no user id (keys tried: {', '.join(IN_APP_RECIPIENT_DATA_KEYS)}; "
+            f"recipient_data={recipient_data!r})"
+        )
+
     async def _send_in_app(
         self,
         *,
         channel_service: ChannelService,
         organization_id: int,
+        config: ReminderConfig,
         instance: ReminderInstance,
         resolver: ReminderEntityResolver,
         entity: ReminderEntitySnapshot,
         entity_label: str,
         message: str,
     ):
-        user_id = resolver.get_recipient_user_id(entity)
-        if user_id is None:
-            raise ValueError("missing recipient user id for in_app channel")
+        recipient_data = getattr(config, "recipient_data", None)
+        user_id = self._resolve_in_app_user_id(
+            config=config,
+            resolver=resolver,
+            entity=entity,
+        )
+        if user_id is None or int(user_id) <= 0:
+            raise self._missing_in_app_user_id_error(config=config, entity=entity)
+
+        connection_settings = {
+            "organization_id": organization_id,
+            "entity_type": instance.entity_type,
+            "entity_id": instance.entity_id,
+            "reminder_instance_id": instance.id,
+            "title": entity_label,
+            "priority": "normal",
+            "metadata": {
+                "reference_id": resolver.get_reference(entity),
+                "customer_name": resolver.get_customer_name(entity),
+            },
+        }
+        logger.info(
+            "[ReminderProcessor] in_app delivery entity_type=%s entity_id=%s "
+            "recipient_user_id=%s recipient_data=%s payload=%s",
+            entity.entity_type,
+            entity.entity_id,
+            user_id,
+            recipient_data,
+            {"recipient": str(int(user_id)), "text": message, "connection_settings": connection_settings},
+        )
 
         return await channel_service.send_outbound_message(
             organization_id=organization_id,
             channel=IN_APP_CHANNEL,
             recipient=str(int(user_id)),
             text=message,
-            connection_settings={
-                "organization_id": organization_id,
-                "entity_type": instance.entity_type,
-                "entity_id": instance.entity_id,
-                "reminder_instance_id": instance.id,
-                "title": entity_label,
-                "priority": "normal",
-                "metadata": {
-                    "reference_id": resolver.get_reference(entity),
-                    "customer_name": resolver.get_customer_name(entity),
-                },
-            },
+            connection_settings=connection_settings,
+        )
+
+    @staticmethod
+    def _recipient_from_data(config: ReminderConfig, channel: str) -> str:
+        """Return the channel recipient from config.recipient_data, if present."""
+        recipient_data = getattr(config, "recipient_data", None)
+        if not isinstance(recipient_data, dict) or not recipient_data:
+            return ""
+        key = CHANNEL_RECIPIENT_DATA_KEYS.get(channel)
+        if not key:
+            return ""
+        return str(recipient_data.get(key) or "").strip()
+
+    def _resolve_recipient(
+        self,
+        *,
+        config: ReminderConfig,
+        channel: str,
+        resolver: ReminderEntityResolver,
+        entity: ReminderEntitySnapshot,
+    ) -> str:
+        """Prefer recipient_data; fall back to the module resolver when empty."""
+        from_data = self._recipient_from_data(config, channel)
+        if from_data:
+            return from_data
+        return (resolver.get_recipient(entity) or "").strip()
+
+    def _resolve_template_variables(
+        self,
+        *,
+        config: ReminderConfig,
+        resolver: ReminderEntityResolver,
+        entity: ReminderEntitySnapshot,
+        entity_label: str,
+        sender_name: str,
+        scheduled_at: datetime,
+    ) -> dict[str, object]:
+        """Prefer config.template_variables; fall back to the resolver context."""
+        configured = getattr(config, "template_variables", None)
+        if isinstance(configured, dict) and configured:
+            return dict(configured)
+        return resolver.build_template_context(
+            entity,
+            entity_label=entity_label,
+            sender_name=sender_name,
+            scheduled_at=scheduled_at,
         )
 
     async def _send_outbound_channel(
@@ -308,15 +455,30 @@ class ReminderProcessorService:
         message: str,
         scheduled_at: datetime,
     ):
-        phone_number = (resolver.get_recipient(entity) or "").strip()
-        if not phone_number:
+        recipient = self._resolve_recipient(
+            config=config,
+            channel=channel,
+            resolver=resolver,
+            entity=entity,
+        )
+        if not recipient:
             raise ValueError("missing recipient phone number")
+
+        template_variables = self._resolve_template_variables(
+            config=config,
+            resolver=resolver,
+            entity=entity,
+            entity_label=entity_label,
+            sender_name=sender_name,
+            scheduled_at=scheduled_at,
+        )
 
         send_kwargs: dict[str, object] = {
             "organization_id": organization_id,
             "channel": config.channel,
-            "recipient": phone_number,
+            "recipient": recipient,
             "text": message,
+            "template_variables": template_variables,
         }
         settings = get_settings()
         template_name = (settings.whatsapp_template_name or "").strip()
@@ -325,11 +487,5 @@ class ReminderProcessorService:
             send_kwargs["connection_settings"] = {"use_whatsapp_session_text": False}
             send_kwargs["template_name"] = template_name
             send_kwargs["template_language"] = template_language
-            send_kwargs["template_variables"] = resolver.build_template_context(
-                entity,
-                entity_label=entity_label,
-                sender_name=sender_name,
-                scheduled_at=scheduled_at,
-            )
 
         return await channel_service.send_outbound_message(**send_kwargs)

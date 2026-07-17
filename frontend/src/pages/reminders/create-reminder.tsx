@@ -6,6 +6,10 @@ import { useWorkbench } from "../../app/providers/workbench-provider";
 import { DashboardLayout, LoadingState, SectionCard } from "../../components/design-system";
 import { ReminderRecipientFields } from "../../components/reminder-management/ReminderRecipientFields";
 import { ReminderSchedulingFields } from "../../components/reminder-management/ReminderSchedulingFields";
+import {
+  RelativeReminderRulesFields,
+  relativeRulesDraftPatch,
+} from "../../components/reminder-management/RelativeReminderRulesFields";
 import Combobox from "../../components/ui/Combobox";
 import MultiSelect from "../../components/ui/MultiSelect";
 import { InsuranceDatePicker } from "../../components/ui/insurance-date-picker";
@@ -517,6 +521,12 @@ export function CreateReminderPage() {
                     </label>
                   </div>
 
+                  <RelativeReminderRulesFields
+                    rules={draft.relativeRules}
+                    onChange={(rules) => patchDraft(relativeRulesDraftPatch(rules))}
+                    offsetUnitOptions={OFFSET_UNIT_OPTIONS}
+                  />
+
                   <ReminderSchedulingFields
                     value={{
                       offsetValue: draft.offsetValue,
@@ -530,17 +540,6 @@ export function CreateReminderPage() {
                     }}
                     onChange={(patch) => {
                       patchDraft({
-                        ...(patch.offsetValue !== undefined
-                          ? { offsetValue: patch.offsetValue }
-                          : {}),
-                        ...(patch.offsetUnit !== undefined
-                          ? {
-                              offsetUnit: patch.offsetUnit as PersonalReminderDraft["offsetUnit"],
-                            }
-                          : {}),
-                        ...(patch.offsetDirection !== undefined
-                          ? { offsetDirection: patch.offsetDirection }
-                          : {}),
                         ...(patch.repeatEnabled !== undefined
                           ? { repeatEnabled: patch.repeatEnabled }
                           : {}),
@@ -563,6 +562,7 @@ export function CreateReminderPage() {
                     }}
                     offsetUnitOptions={OFFSET_UNIT_OPTIONS}
                     stopConditionOptions={stopConditionOptions}
+                    showTriggerOffset={false}
                     limitsMode="with-recurring"
                     enableRecurringLabel="Enable Recurring"
                   />

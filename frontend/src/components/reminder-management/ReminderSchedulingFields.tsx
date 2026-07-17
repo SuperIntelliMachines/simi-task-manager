@@ -14,6 +14,7 @@ import type {
   ReminderRecurrenceUnit,
   ReminderStopCondition,
 } from "../../lib/reminder-management/types";
+import { NormalizedNumberInput } from "./NormalizedNumberInput";
 
 export type ReminderSchedulingValues = {
   offsetValue: number;
@@ -57,13 +58,12 @@ export function ReminderSchedulingFields({
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="block min-w-0">
               <span className={labelClassName}>Offset Value</span>
-              <input
-                type="number"
+              <NormalizedNumberInput
                 min={0}
                 step={1}
                 className={fieldClassName}
                 value={value.offsetValue}
-                onChange={(event) => onChange({ offsetValue: Number(event.target.value) })}
+                onChange={(offsetValue) => onChange({ offsetValue })}
               />
             </label>
             <label className="block min-w-0">
@@ -125,15 +125,12 @@ export function ReminderSchedulingFields({
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block min-w-0">
               <span className={labelClassName}>Repeat Every</span>
-              <input
-                type="number"
+              <NormalizedNumberInput
                 min={1}
                 step={1}
                 className={fieldClassName}
                 value={value.repeatFrequencyValue}
-                onChange={(event) =>
-                  onChange({ repeatFrequencyValue: Number(event.target.value) })
-                }
+                onChange={(repeatFrequencyValue) => onChange({ repeatFrequencyValue })}
               />
             </label>
             <label className="block min-w-0">
@@ -163,17 +160,14 @@ export function ReminderSchedulingFields({
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block min-w-0">
               <span className={labelClassName}>Maximum Attempts</span>
-              <input
-                type="number"
+              <NormalizedNumberInput
                 min={1}
                 step={1}
                 className={fieldClassName}
-                value={value.maxAttempts ?? ""}
+                value={value.maxAttempts}
+                allowEmpty
                 placeholder="Optional"
-                onChange={(event) => {
-                  const raw = event.target.value.trim();
-                  onChange({ maxAttempts: raw ? Number(raw) : null });
-                }}
+                onChange={(maxAttempts) => onChange({ maxAttempts })}
               />
               <p className="mt-1 text-[11px] leading-snug text-slate-500 dark:text-slate-500">
                 Leave empty to continue until the stop condition is met.

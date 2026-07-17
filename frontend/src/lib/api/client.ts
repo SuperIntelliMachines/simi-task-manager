@@ -1,4 +1,5 @@
 import { ApiRequestError, parseApiErrorResponse } from "./errors";
+import { authHeaders, refreshAccessToken } from "./auth-token";
 import { mockApi } from "./mock-store";
 import type {
   ApprovalRequestRecord,
@@ -187,27 +188,36 @@ function buildUrl(path: string, params?: Record<string, string | number | boolea
   return url.toString();
 }
 
-function authHeaders(): Record<string, string> {
-  try {
-    const token = localStorage.getItem("atm:token");
-    if (token) {
-      return { Authorization: `Bearer ${token}` };
-    }
-  } catch {
-    // ignore storage errors
+function mergeRequestHeaders(init?: RequestInit): HeadersInit {
+  const headers = new Headers({ "Content-Type": "application/json", ...authHeaders() });
+  if (init?.headers) {
+    const extra = new Headers(init.headers);
+    extra.forEach((value, key) => {
+      headers.set(key, value);
+    });
   }
-  return {};
+  return headers;
 }
 
 async function requestJson<T>(
   path: string,
   init?: RequestInit,
-  params?: Record<string, string | number | boolean | undefined>
+  params?: Record<string, string | number | boolean | undefined>,
+  allowRefreshRetry = true,
 ): Promise<T> {
+  const { headers: _ignoredHeaders, ...restInit } = init ?? {};
   const response = await fetch(buildUrl(path, params), {
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
-    ...init,
+    ...restInit,
+    headers: mergeRequestHeaders(init),
   });
+
+  if (response.status === 401 && allowRefreshRetry) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      return requestJson<T>(path, init, params, false);
+    }
+  }
+
   if (!response.ok) {
     let body: unknown = null;
     try {
@@ -407,10 +417,20 @@ export const apiClient = {
       formData.append("policy_id", String(policyId));
     }
 
-    const response = await fetch(buildUrl("/insurance/policies/upload-document"), {
-      method: "POST",
-      body: formData,
-    });
+    const sendUpload = async () =>
+      fetch(buildUrl("/insurance/policies/upload-document"), {
+        method: "POST",
+        headers: { ...authHeaders() },
+        body: formData,
+      });
+
+    let response = await sendUpload();
+    if (response.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        response = await sendUpload();
+      }
+    }
 
     if (!response.ok) {
       let message = "Upload failed. Please try again.";

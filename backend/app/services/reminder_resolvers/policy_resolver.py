@@ -181,13 +181,31 @@ class PolicyReminderResolver(ReminderEntityResolver):
         contact = await session.get(Contact, policy.policyholder_id)
         customer_name = (contact.name if contact is not None else None) or "Customer"
         phone = (policy.mobile_number or "").strip() or None
+        # In-app notifications target the assigned Insurance agent (same as
+        # insurance_service / escalation jobs). Phone channels use ``recipient``.
+        assigned_agent_id = getattr(policy, "assigned_agent_user_id", None)
+        recipient_user_id = (
+            int(assigned_agent_id)
+            if assigned_agent_id is not None and int(assigned_agent_id) > 0
+            else None
+        )
         return ReminderEntitySnapshot(
             organization_id=int(policy.organization_id),
             entity_type=self.entity_type,
             entity_id=int(policy.id),
             anchor_date=normalize_to_utc_naive(policy.expiry_date),
             recipient=phone,
+            recipient_user_id=recipient_user_id,
             reference_id=(policy.policy_number or "").strip(),
             customer_name=customer_name,
             source=policy,
         )
+
+    def get_recipient_user_id(self, entity: ReminderEntitySnapshot) -> int | None:
+        if entity.recipient_user_id is not None and int(entity.recipient_user_id) > 0:
+            return int(entity.recipient_user_id)
+        policy = entity.source
+        assigned = getattr(policy, "assigned_agent_user_id", None) if policy is not None else None
+        if assigned is not None and int(assigned) > 0:
+            return int(assigned)
+        return None

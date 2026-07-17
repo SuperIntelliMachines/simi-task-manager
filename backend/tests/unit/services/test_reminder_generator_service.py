@@ -156,7 +156,7 @@ async def test_generate_instances_supports_all_units(async_session):
     )
 
     got = {item.scheduled_at for item in created}
-    assert datetime(2026, 3, 29, 9, 0, 0) in got  # 48 hours -> default 09:00 wall clock
+    assert datetime(2026, 3, 29, 12, 0, 0) in got  # 48 hours preserves anchor clock
     assert datetime(2026, 3, 21, 9, 0, 0) in got  # 10 days
     assert datetime(2026, 3, 17, 9, 0, 0) in got  # 2 weeks
     assert datetime(2026, 2, 28, 9, 0, 0) in got  # 1 month from Mar 31

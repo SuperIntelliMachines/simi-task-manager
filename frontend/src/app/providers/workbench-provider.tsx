@@ -7,6 +7,7 @@ import {
   useEffect,
   type PropsWithChildren,
 } from "react";
+import { refreshAccessToken } from "../../lib/api/auth-token";
 import { hasPermission as checkPermission } from "../../lib/auth/permissions";
 import type { AuthMeProfile } from "../../lib/auth/post-login";
 import { organizationLabelFromProfile } from "../../lib/auth/post-login";
@@ -190,9 +191,24 @@ export function WorkbenchProvider({
         return null;
       }
 
-      const res = await fetch("/api/v1/auth/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const fetchMe = async (accessToken: string) =>
+        fetch("/api/v1/auth/me", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+      let res = await fetchMe(token);
+
+      // Access JWT may have expired while the refresh token is still valid.
+      // Renew once before wiping the session (avoids false logouts on Save Policy).
+      if (res.status === 401) {
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          const nextToken = localStorage.getItem("atm:token");
+          if (nextToken) {
+            res = await fetchMe(nextToken);
+          }
+        }
+      }
 
       // Only wipe the session on definitive auth failures. Transient 5xx / network
       // blips must not clear organizationId (that caused Insurance dashboards to
