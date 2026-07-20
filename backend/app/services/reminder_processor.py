@@ -18,32 +18,16 @@ from app.services.reminder_resolvers import (
     UnsupportedReminderEntityTypeError,
     get_reminder_resolver_factory,
 )
+from app.utils.recipient_data import (
+    normalize_recipient_data,
+    recipient_address_for_channel,
+)
 from app.utils.reminder_query_time import fetch_db_now
 from app.utils.reminder_recurrence import count_sent_instances, schedule_next_recurrence
 
 logger = logging.getLogger(__name__)
 
 IN_APP_CHANNEL = "in_app"
-
-# Maps an outbound channel to the key it reads from reminder_config.recipient_data.
-CHANNEL_RECIPIENT_DATA_KEYS: dict[str, str] = {
-    "whatsapp": "whatsapp",
-    "sms": "phone",
-    "email": "email",
-    "telegram": "telegram_chat_id",
-    "in_app": "user_id",
-}
-
-# Extra recipient_data keys accepted for in_app (Generic Reminder / module configs).
-IN_APP_RECIPIENT_DATA_KEYS: tuple[str, ...] = (
-    "user_id",
-    "recipient_user_id",
-    "assigned_user_id",
-    "assigned_agent_user_id",
-    "owner_user_id",
-    "created_by",
-    "agent_id",
-)
 
 
 class ReminderProcessorService:
@@ -201,34 +185,70 @@ class ReminderProcessorService:
                     now=now,
                 )
 
-                if channel == IN_APP_CHANNEL:
-                    outbound = await self._send_in_app(
-                        channel_service=channel_service,
-                        organization_id=organization_id,
-                        config=config,
-                        instance=instance,
-                        resolver=resolver,
-                        entity=entity,
-                        entity_label=entity_label,
-                        message=message,
-                    )
-                else:
-                    outbound = await self._send_outbound_channel(
-                        channel_service=channel_service,
-                        organization_id=organization_id,
-                        config=config,
-                        channel=channel,
-                        resolver=resolver,
-                        entity=entity,
-                        entity_label=entity_label,
-                        sender_name=sender_name,
-                        message=message,
-                        scheduled_at=instance.scheduled_at,
+                recipients = normalize_recipient_data(
+                    getattr(config, "recipient_data", None)
+                )
+                # Empty list → one resolver-backed delivery (legacy behavior).
+                delivery_targets: list[dict[str, object] | None] = (
+                    list(recipients) if recipients else [None]
+                )
+
+                send_errors: list[str] = []
+                sent_to_any = False
+                for target in delivery_targets:
+                    try:
+                        if channel == IN_APP_CHANNEL:
+                            outbound = await self._send_in_app(
+                                channel_service=channel_service,
+                                organization_id=organization_id,
+                                config=config,
+                                instance=instance,
+                                resolver=resolver,
+                                entity=entity,
+                                entity_label=entity_label,
+                                message=message,
+                                recipient_entry=target,
+                            )
+                        else:
+                            outbound = await self._send_outbound_channel(
+                                channel_service=channel_service,
+                                organization_id=organization_id,
+                                config=config,
+                                channel=channel,
+                                resolver=resolver,
+                                entity=entity,
+                                entity_label=entity_label,
+                                sender_name=sender_name,
+                                message=message,
+                                scheduled_at=instance.scheduled_at,
+                                recipient_entry=target,
+                            )
+
+                        if outbound.status != "sent":
+                            provider_error = getattr(outbound, "provider_error", None)
+                            raise RuntimeError(
+                                provider_error
+                                or f"channel send failed with status={outbound.status}"
+                            )
+                        sent_to_any = True
+                    except Exception as recipient_exc:  # noqa: BLE001
+                        logger.exception(
+                            "Reminder recipient delivery failed instance=%s channel=%s recipient=%s",
+                            instance.id,
+                            channel,
+                            target,
+                        )
+                        send_errors.append(str(recipient_exc))
+
+                if not sent_to_any:
+                    raise RuntimeError(
+                        "; ".join(send_errors) or "all recipient deliveries failed"
                     )
 
-                if outbound.status != "sent":
-                    provider_error = getattr(outbound, "provider_error", None)
-                    raise RuntimeError(provider_error or f"channel send failed with status={outbound.status}")
+                if send_errors:
+                    instance.last_error = (
+                        "partial recipient failures: " + "; ".join(send_errors)
+                    )
 
                 instance.status = "SENT"
                 instance.sent_at = now
@@ -293,13 +313,18 @@ class ReminderProcessorService:
                 return parsed
         return None
 
-    def _recipient_user_id_from_data(self, config: ReminderConfig) -> int | None:
-        """Return an in_app user id from config.recipient_data when present."""
-        recipient_data = getattr(config, "recipient_data", None)
-        if not isinstance(recipient_data, dict) or not recipient_data:
+    def _recipient_user_id_from_entry(
+        self,
+        recipient_entry: dict[str, object] | None,
+    ) -> int | None:
+        if not isinstance(recipient_entry, dict) or not recipient_entry:
             return None
-        for key in IN_APP_RECIPIENT_DATA_KEYS:
-            parsed = self._coerce_positive_user_id(recipient_data.get(key))
+        address = recipient_address_for_channel(recipient_entry, IN_APP_CHANNEL)
+        return self._coerce_positive_user_id(address) if address else None
+
+    def _recipient_user_id_from_data(self, config: ReminderConfig) -> int | None:
+        for entry in normalize_recipient_data(getattr(config, "recipient_data", None)):
+            parsed = self._recipient_user_id_from_entry(entry)
             if parsed is not None:
                 return parsed
         return None
@@ -310,8 +335,10 @@ class ReminderProcessorService:
         config: ReminderConfig,
         resolver: ReminderEntityResolver,
         entity: ReminderEntitySnapshot,
+        recipient_entry: dict[str, object] | None = None,
     ) -> int | None:
-        """Prefer recipient_data; fall back to the module resolver snapshot."""
+        if recipient_entry is not None:
+            return self._recipient_user_id_from_entry(recipient_entry)
         from_data = self._recipient_user_id_from_data(config)
         if from_data is not None:
             return from_data
@@ -322,6 +349,7 @@ class ReminderProcessorService:
         *,
         config: ReminderConfig,
         entity: ReminderEntitySnapshot,
+        recipient_entry: dict[str, object] | None = None,
     ) -> ValueError:
         entity_type = (entity.entity_type or "").strip().lower() or "unknown"
         recipient_data = getattr(config, "recipient_data", None)
@@ -333,14 +361,13 @@ class ReminderProcessorService:
                 "missing recipient user id for in_app channel: "
                 f"policy id={entity.entity_id} has no assigned_agent_user_id "
                 f"(got {assigned!r}) and recipient_data has no user id "
-                f"(keys tried: {', '.join(IN_APP_RECIPIENT_DATA_KEYS)}; "
-                f"recipient_data={recipient_data!r})"
+                f"(recipient_entry={recipient_entry!r}; recipient_data={recipient_data!r})"
             )
         return ValueError(
             "missing recipient user id for in_app channel: "
             f"entity_type={entity_type} entity_id={entity.entity_id} "
             "resolver did not provide recipient_user_id and recipient_data "
-            f"has no user id (keys tried: {', '.join(IN_APP_RECIPIENT_DATA_KEYS)}; "
+            f"has no user id (recipient_entry={recipient_entry!r}; "
             f"recipient_data={recipient_data!r})"
         )
 
@@ -355,15 +382,20 @@ class ReminderProcessorService:
         entity: ReminderEntitySnapshot,
         entity_label: str,
         message: str,
+        recipient_entry: dict[str, object] | None = None,
     ):
-        recipient_data = getattr(config, "recipient_data", None)
         user_id = self._resolve_in_app_user_id(
             config=config,
             resolver=resolver,
             entity=entity,
+            recipient_entry=recipient_entry,
         )
         if user_id is None or int(user_id) <= 0:
-            raise self._missing_in_app_user_id_error(config=config, entity=entity)
+            raise self._missing_in_app_user_id_error(
+                config=config,
+                entity=entity,
+                recipient_entry=recipient_entry,
+            )
 
         connection_settings = {
             "organization_id": organization_id,
@@ -375,18 +407,21 @@ class ReminderProcessorService:
             "metadata": {
                 "reference_id": resolver.get_reference(entity),
                 "customer_name": resolver.get_customer_name(entity),
+                "recipient_type": (
+                    recipient_entry.get("recipient_type")
+                    if isinstance(recipient_entry, dict)
+                    else None
+                ),
             },
         }
         logger.info(
             "[ReminderProcessor] in_app delivery entity_type=%s entity_id=%s "
-            "recipient_user_id=%s recipient_data=%s payload=%s",
+            "recipient_user_id=%s recipient_entry=%s",
             entity.entity_type,
             entity.entity_id,
             user_id,
-            recipient_data,
-            {"recipient": str(int(user_id)), "text": message, "connection_settings": connection_settings},
+            recipient_entry,
         )
-
         return await channel_service.send_outbound_message(
             organization_id=organization_id,
             channel=IN_APP_CHANNEL,
@@ -396,15 +431,20 @@ class ReminderProcessorService:
         )
 
     @staticmethod
-    def _recipient_from_data(config: ReminderConfig, channel: str) -> str:
-        """Return the channel recipient from config.recipient_data, if present."""
-        recipient_data = getattr(config, "recipient_data", None)
-        if not isinstance(recipient_data, dict) or not recipient_data:
+    def _recipient_from_entry(
+        recipient_entry: dict[str, object] | None,
+        channel: str,
+    ) -> str:
+        if not isinstance(recipient_entry, dict) or not recipient_entry:
             return ""
-        key = CHANNEL_RECIPIENT_DATA_KEYS.get(channel)
-        if not key:
-            return ""
-        return str(recipient_data.get(key) or "").strip()
+        return recipient_address_for_channel(recipient_entry, channel)
+
+    def _recipient_from_data(self, config: ReminderConfig, channel: str) -> str:
+        for entry in normalize_recipient_data(getattr(config, "recipient_data", None)):
+            address = self._recipient_from_entry(entry, channel)
+            if address:
+                return address
+        return ""
 
     def _resolve_recipient(
         self,
@@ -413,8 +453,10 @@ class ReminderProcessorService:
         channel: str,
         resolver: ReminderEntityResolver,
         entity: ReminderEntitySnapshot,
+        recipient_entry: dict[str, object] | None = None,
     ) -> str:
-        """Prefer recipient_data; fall back to the module resolver when empty."""
+        if recipient_entry is not None:
+            return self._recipient_from_entry(recipient_entry, channel)
         from_data = self._recipient_from_data(config, channel)
         if from_data:
             return from_data
@@ -430,7 +472,6 @@ class ReminderProcessorService:
         sender_name: str,
         scheduled_at: datetime,
     ) -> dict[str, object]:
-        """Prefer config.template_variables; fall back to the resolver context."""
         configured = getattr(config, "template_variables", None)
         if isinstance(configured, dict) and configured:
             return dict(configured)
@@ -454,15 +495,25 @@ class ReminderProcessorService:
         sender_name: str,
         message: str,
         scheduled_at: datetime,
+        recipient_entry: dict[str, object] | None = None,
     ):
         recipient = self._resolve_recipient(
             config=config,
             channel=channel,
             resolver=resolver,
             entity=entity,
+            recipient_entry=recipient_entry,
         )
         if not recipient:
-            raise ValueError("missing recipient phone number")
+            missing_by_channel = {
+                "whatsapp": "missing recipient phone number",
+                "sms": "missing recipient phone number",
+                "email": "missing recipient email",
+                "telegram": "missing recipient telegram chat id",
+            }
+            raise ValueError(
+                missing_by_channel.get(channel, "missing recipient for channel delivery")
+            )
 
         template_variables = self._resolve_template_variables(
             config=config,

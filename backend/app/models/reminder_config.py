@@ -67,8 +67,8 @@ class ReminderConfig(Base):
     sender_name = Column(String(255), nullable=True)
     # Module-specific WhatsApp/template placeholder values (any JSON object).
     template_variables = Column(JSON, nullable=False, default=dict, server_default="{}")
-    # Module-specific recipient contact details (any JSON object).
-    recipient_data = Column(JSON, nullable=False, default=dict, server_default="{}")
+    # Module-specific recipient contact details (JSON array of recipient objects).
+    recipient_data = Column(JSON, nullable=False, default=list, server_default="[]")
 
     # Anchor selection (generic — module-specific keys live in anchor_key values, not columns)
     anchor_type = Column(

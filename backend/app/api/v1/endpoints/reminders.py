@@ -1,8 +1,15 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.adapters.claims_reminder_config import (
+    ClaimsReminderConfigAdapterError,
+    adapt_claims_reminder_config_payload_async,
+    is_claims_integration_payload,
+)
 from app.api.deps import PermissionChecker, get_current_user
 from app.core.database import get_db_session
 from app.core.permissions import (
@@ -47,6 +54,132 @@ router = APIRouter(
     tags=["reminders"],
     dependencies=[Depends(get_current_user)],
 )
+
+
+async def parse_reminder_config_create_body(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> ReminderConfigCreateBody:
+    """Parse create body; resolve Claims tenant UUIDs before schema validation."""
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422, detail="Request body must be valid JSON"
+        ) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status_code=422, detail="Request body must be a JSON object"
+        )
+
+    try:
+        if is_claims_integration_payload(data):
+            data = await adapt_claims_reminder_config_payload_async(data, session)
+        return ReminderConfigCreateBody.model_validate(data)
+    except ClaimsReminderConfigAdapterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+
+# OpenAPI requestBody for POST /config. Runtime body is still parsed by
+# parse_reminder_config_create_body (Depends), which FastAPI does not expose as a
+# body field — so we declare the schema explicitly for Swagger.
+_REMINDER_CONFIG_CREATE_OPENAPI_EXTRA: dict = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": ReminderConfigCreateBody.model_json_schema(),
+                "examples": {
+                    "native_simi": {
+                        "summary": "Native SIMI ReminderConfigCreateBody",
+                        "value": {
+                            "organization_id": 1,
+                            "entity_type": "policy",
+                            "entity_id": 116,
+                            "template_key": "policy_renewal_reminder",
+                            "template_variables": {
+                                "customer_name": "John",
+                                "policy_number": "POL-116",
+                            },
+                            "recipient_data": [
+                                {
+                                    "recipient_type": "customer",
+                                    "phone": "+919999999999",
+                                    "email": "customer@example.com",
+                                    "whatsapp": "+919999999999",
+                                },
+                                {
+                                    "recipient_type": "manager",
+                                    "email": "manager@example.com",
+                                },
+                            ],
+                            "reminders": [
+                                {
+                                    "offset_value": 7,
+                                    "offset_unit": "days",
+                                    "time_of_day": "10:00",
+                                    "channels": ["whatsapp", "email"],
+                                }
+                            ],
+                            "replace_existing": True,
+                        },
+                    },
+                    "legacy_single_recipient_object": {
+                        "summary": "Legacy single recipient object (auto-wrapped to array)",
+                        "value": {
+                            "organization_id": 1,
+                            "entity_type": "policy",
+                            "entity_id": 116,
+                            "recipient_data": {
+                                "phone": "+919999999999",
+                                "email": "customer@example.com",
+                            },
+                            "reminders": [
+                                {
+                                    "offset_value": 1,
+                                    "offset_unit": "days",
+                                    "channels": ["email"],
+                                }
+                            ],
+                        },
+                    },
+                    "claims_integration": {
+                        "summary": "Claims integration payload (adapted at ingress)",
+                        "description": (
+                            "Accepted at runtime and translated by "
+                            "parse_reminder_config_create_body before validation."
+                        ),
+                        "value": {
+                            "organization_id": "11111111-1111-1111-1111-111111111111",
+                            "entity_type": "crm_service_case",
+                            "entity_id": 4401,
+                            "trigger": {
+                                "type": "case_created",
+                                "to_status": "pending_submission",
+                            },
+                            "offset": {"amount": 2, "unit": "days"},
+                            "channels": ["web", "telegram"],
+                            "template": "claims_follow_up",
+                            "recipients": [
+                                {
+                                    "recipient_type": "customer",
+                                    "email": "customer@example.com",
+                                    "user_id": 55,
+                                },
+                                {
+                                    "recipient_type": "manager",
+                                    "email": "manager@example.com",
+                                },
+                            ],
+                        },
+                    },
+                },
+            }
+        },
+    }
+}
 
 
 def _serialize(item):
@@ -247,9 +380,14 @@ async def save_reminder_settings(
         raise
 
 
-@router.post("/config", response_model=ReminderConfigGroupListResponse, dependencies=[Depends(PermissionChecker(REMINDERS_CREATE))])
+@router.post(
+    "/config",
+    response_model=ReminderConfigGroupListResponse,
+    dependencies=[Depends(PermissionChecker(REMINDERS_CREATE))],
+    openapi_extra=_REMINDER_CONFIG_CREATE_OPENAPI_EXTRA,
+)
 async def create_reminder_configs(
-    body: ReminderConfigCreateBody,
+    body: ReminderConfigCreateBody = Depends(parse_reminder_config_create_body),
     session: AsyncSession = Depends(get_db_session),
 ):
     service = ReminderConfigService(session)
@@ -382,7 +520,7 @@ async def update_reminder_config(
             "offset_unit": updated.offset_unit,
             "time_of_day": updated.time_of_day,
             "template_variables": getattr(updated, "template_variables", None) or {},
-            "recipient_data": getattr(updated, "recipient_data", None) or {},
+            "recipient_data": getattr(updated, "recipient_data", None) or [],
             "channels": [updated.channel],
             "is_active": updated.is_active,
         }

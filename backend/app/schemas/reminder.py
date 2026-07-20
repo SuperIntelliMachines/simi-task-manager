@@ -13,13 +13,37 @@ from app.core.enums import (
     ReminderAnchorType,
     ReminderOffsetDirection,
 )
+from app.api.adapters.claims_reminder_config import (
+    ClaimsReminderConfigAdapterError,
+    adapt_claims_reminder_config_payload,
+    is_claims_integration_payload,
+)
 from app.utils.policy_reminder_settings import parse_time_hhmm
+from app.utils.recipient_data import (
+    RecipientDataValidationError,
+    normalize_recipient_data,
+)
 from app.utils.reminder_config_validation import (
     ReminderSchedulingValidationError,
     validate_anchor_fields,
     validate_scheduling_fields,
 )
 from app.utils.reminder_recurrence_validation import validate_recurrence_fields
+
+
+def _normalize_recipient_data_field(value: object) -> list[dict[str, Any]]:
+    try:
+        return normalize_recipient_data(value)
+    except RecipientDataValidationError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _normalize_optional_recipient_data_field(
+    value: object,
+) -> list[dict[str, Any]] | None:
+    if value is None:
+        return None
+    return _normalize_recipient_data_field(value)
 
 
 class RecurrencePayload(BaseModel):
@@ -102,7 +126,14 @@ class ReminderConfigCreateBody(BaseModel):
     sender_name: str | None = None
     # Any JSON object — keys differ by module (Insurance, Claims, Inventory, CRM, …).
     template_variables: dict[str, Any] | None = Field(default_factory=dict)
-    recipient_data: dict[str, Any] | None = Field(default_factory=dict)
+    recipient_data: list[dict[str, Any]] | None = Field(
+        default_factory=list,
+        description=(
+            "List of recipient objects. Each may include recipient_type, name, "
+            "phone, email, telegram_chat_id, whatsapp/whatsapp_number, user_id. "
+            "Legacy single-object payloads are accepted and wrapped to a one-item array."
+        ),
+    )
     dnd_start: time | None = None
     dnd_end: time | None = None
     # True (default): Settings-style replace. False: append without deactivating siblings.
@@ -159,12 +190,22 @@ class ReminderConfigCreateBody(BaseModel):
 
     @field_validator("recipient_data", mode="before")
     @classmethod
-    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
-        if value is None:
-            return {}
+    def normalize_recipient_data(cls, value: object) -> list[dict[str, Any]]:
+        return _normalize_recipient_data_field(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def adapt_external_integration_payloads(cls, value: object) -> object:
+        """Translate Claims ReminderIntegration payloads into native create body."""
         if not isinstance(value, dict):
-            raise ValueError("recipient_data must be a JSON object")
-        return dict(value)
+            return value
+        data = dict(value)
+        if not is_claims_integration_payload(data):
+            return data
+        try:
+            return adapt_claims_reminder_config_payload(data)
+        except ClaimsReminderConfigAdapterError as exc:
+            raise ValueError(str(exc)) from exc
 
     @model_validator(mode="before")
     @classmethod
@@ -232,9 +273,15 @@ class ReminderConfigResponse(BaseModel):
     entity_label: str | None = None
     sender_name: str | None = None
     template_variables: dict[str, Any] = Field(default_factory=dict)
-    recipient_data: dict[str, Any] = Field(default_factory=dict)
-    anchor_type: str
-    anchor_key: str
+    recipient_data: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "List of recipient objects. Each may include recipient_type, name, "
+            "phone, email, telegram_chat_id, whatsapp/whatsapp_number, user_id. "
+            "Legacy single-object payloads are accepted and wrapped to a one-item array."
+        ),
+    )
+
     offset_direction: str
     offset_value: int
     offset_unit: str
@@ -268,12 +315,8 @@ class ReminderConfigResponse(BaseModel):
 
     @field_validator("recipient_data", mode="before")
     @classmethod
-    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("recipient_data must be a JSON object")
-        return dict(value)
+    def normalize_recipient_data(cls, value: object) -> list[dict[str, Any]]:
+        return _normalize_recipient_data_field(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -286,7 +329,7 @@ class ReminderConfigResponse(BaseModel):
             data.setdefault("trigger_offset_unit", data.get("offset_unit"))
             data.setdefault("trigger_offset_direction", data.get("offset_direction"))
             data.setdefault("template_variables", {})
-            data.setdefault("recipient_data", {})
+            data.setdefault("recipient_data", [])
             return data
         if hasattr(value, "absolute_scheduled_at"):
             return {
@@ -299,7 +342,7 @@ class ReminderConfigResponse(BaseModel):
                 "entity_label": value.entity_label,
                 "sender_name": value.sender_name,
                 "template_variables": getattr(value, "template_variables", None) or {},
-                "recipient_data": getattr(value, "recipient_data", None) or {},
+                "recipient_data": getattr(value, "recipient_data", None) or [],
                 "anchor_type": getattr(value, "anchor_type", ReminderAnchorType.DATE.value),
                 "anchor_key": getattr(value, "anchor_key", DEFAULT_REMINDER_ANCHOR_KEY),
                 "offset_direction": getattr(
@@ -491,7 +534,7 @@ class ReminderSettingsSaveBody(BaseModel):
     entity_label: str | None = None
     sender_name: str | None = None
     template_variables: dict[str, Any] | None = Field(default_factory=dict)
-    recipient_data: dict[str, Any] | None = Field(default_factory=dict)
+    recipient_data: list[dict[str, Any]] | None = Field(default_factory=list)
     # Optional entity-level defaults applied when offsets omit anchor fields
     anchor_type: str = ReminderAnchorType.DATE.value
     anchor_key: str = DEFAULT_REMINDER_ANCHOR_KEY
@@ -523,12 +566,8 @@ class ReminderSettingsSaveBody(BaseModel):
 
     @field_validator("recipient_data", mode="before")
     @classmethod
-    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("recipient_data must be a JSON object")
-        return dict(value)
+    def normalize_recipient_data(cls, value: object) -> list[dict[str, Any]]:
+        return _normalize_recipient_data_field(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -596,7 +635,7 @@ class ReminderConfigGroupResponse(BaseModel):
     stop_condition: str = DEFAULT_REMINDER_STOP_CONDITION
     stop_condition_config: dict[str, object] | None = None
     template_variables: dict[str, Any] = Field(default_factory=dict)
-    recipient_data: dict[str, Any] = Field(default_factory=dict)
+    recipient_data: list[dict[str, Any]] = Field(default_factory=list)
     time_of_day: time | None = None
     channels: list[str] = Field(default_factory=list)
     is_active: bool
@@ -612,12 +651,8 @@ class ReminderConfigGroupResponse(BaseModel):
 
     @field_validator("recipient_data", mode="before")
     @classmethod
-    def normalize_recipient_data(cls, value: object) -> dict[str, Any]:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("recipient_data must be a JSON object")
-        return dict(value)
+    def normalize_recipient_data(cls, value: object) -> list[dict[str, Any]]:
+        return _normalize_recipient_data_field(value)
 
 
 class ReminderConfigGroupListResponse(BaseModel):
@@ -644,7 +679,7 @@ class ReminderConfigUpdateBody(BaseModel):
     stop_condition: str | None = None
     stop_condition_config: dict[str, object] | None = None
     template_variables: dict[str, Any] | None = None
-    recipient_data: dict[str, Any] | None = None
+    recipient_data: list[dict[str, Any]] | None = None
     dnd_start: time | None = None
     dnd_end: time | None = None
     is_active: bool | None = None
@@ -699,12 +734,8 @@ class ReminderConfigUpdateBody(BaseModel):
 
     @field_validator("recipient_data", mode="before")
     @classmethod
-    def normalize_recipient_data(cls, value: object) -> dict[str, Any] | None:
-        if value is None:
-            return None
-        if not isinstance(value, dict):
-            raise ValueError("recipient_data must be a JSON object")
-        return dict(value)
+    def normalize_recipient_data(cls, value: object) -> list[dict[str, Any]] | None:
+        return _normalize_optional_recipient_data_field(value)
 
     @field_validator("time_of_day", mode="before")
     @classmethod

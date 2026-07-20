@@ -8,5 +8,7 @@ from app.models import reminder_history  # noqa: F401 — Reminder History execu
 from app.models import notification  # noqa: F401 — generic in-app notifications
 from app.models import support_access_sessions  # noqa: F401 — register SupportAccessSession for Organization mapper
 from app.models import rbac, auth_security  # noqa: F401 — RBAC and auth security tables
+from app.models import external_organization_mapping  # noqa: F401 — Claims tenant UUID → SIMI org
+from app.models import external_entity_mapping  # noqa: F401 — external entity id → SIMI entity_id
 
 __all__ = ["Base"]

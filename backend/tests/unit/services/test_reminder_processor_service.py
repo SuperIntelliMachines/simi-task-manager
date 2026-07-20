@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.models.core import Contact, Organization
@@ -65,7 +66,7 @@ async def _add_due_instance(
     channel: str = "whatsapp",
     scheduled_at: datetime | None = None,
     attempt_count: int = 0,
-    recipient_data: dict | None = None,
+    recipient_data: dict | list | None = None,
     template_variables: dict | None = None,
 ) -> ReminderInstance:
     config = ReminderConfig(
@@ -77,7 +78,7 @@ async def _add_due_instance(
         offset_value=1,
         offset_unit="days",
         is_active=True,
-        recipient_data=recipient_data or {},
+        recipient_data=recipient_data if recipient_data is not None else [],
         template_variables=template_variables or {},
     )
     async_session.add(config)
@@ -550,7 +551,7 @@ async def test_recipient_data_empty_falls_back_to_resolver(async_session, monkey
         entity_type="policy",
         entity_id=policy.id,
         channel="whatsapp",
-        recipient_data={},
+        recipient_data=[],
     )
 
     captured: dict[str, object] = {}
@@ -568,6 +569,121 @@ async def test_recipient_data_empty_falls_back_to_resolver(async_session, monkey
     result = await service.process_due_reminders(org.id)
     assert result == {"processed": 1, "sent": 1, "failed": 0}
     assert captured["recipient"] == "+919876543210"
+
+
+@pytest.mark.asyncio
+async def test_multiple_recipients_each_get_notification(async_session, monkeypatch):
+    """Processor iterates recipient_data and sends once per recipient."""
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id)
+    await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel="email",
+        recipient_data=[
+            {"recipient_type": "customer", "email": "customer@example.com"},
+            {"recipient_type": "manager", "email": "manager@example.com"},
+        ],
+    )
+
+    captured: list[str] = []
+
+    async def _ok_send(self, **kwargs):
+        captured.append(str(kwargs["recipient"]))
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured == ["customer@example.com", "manager@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_one_recipient_failure_does_not_block_others(async_session, monkeypatch):
+    """A failed recipient must not prevent remaining recipients from being notified."""
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id)
+    await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel="email",
+        recipient_data=[
+            {"email": "bad@example.com"},
+            {"email": "good@example.com"},
+        ],
+    )
+
+    captured: list[str] = []
+
+    async def _send(self, **kwargs):
+        recipient = str(kwargs["recipient"])
+        captured.append(recipient)
+        if recipient == "bad@example.com":
+            return SimpleNamespace(status="failed", provider_error="bounce")
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured == ["bad@example.com", "good@example.com"]
+
+    rows = (await async_session.execute(select(ReminderInstance))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "SENT"
+    assert rows[0].last_error is not None
+    assert "partial recipient failures" in rows[0].last_error
+
+
+@pytest.mark.asyncio
+async def test_mixed_email_and_phone_recipients_use_channel_address(
+    async_session, monkeypatch
+):
+    """Each recipient contributes the address matching the config channel."""
+    org = await seed_org(async_session)
+    policy = await seed_policy(async_session, org_id=org.id)
+    await _add_due_instance(
+        async_session,
+        org_id=org.id,
+        entity_type="policy",
+        entity_id=policy.id,
+        channel="sms",
+        recipient_data=[
+            {"recipient_type": "customer", "phone": "+911111111111", "email": "a@x.com"},
+            {"recipient_type": "manager", "email": "b@x.com"},  # no phone → skip/fail
+            {"recipient_type": "supervisor", "phone": "+922222222222"},
+        ],
+    )
+
+    captured: list[str] = []
+
+    async def _ok_send(self, **kwargs):
+        captured.append(str(kwargs["recipient"]))
+        return SimpleNamespace(status="sent")
+
+    monkeypatch.setattr(
+        "app.services.channel_service.ChannelService.send_outbound_message",
+        _ok_send,
+    )
+
+    service = ReminderProcessorService(async_session)
+    result = await service.process_due_reminders(org.id)
+    assert result == {"processed": 1, "sent": 1, "failed": 0}
+    assert captured == ["+911111111111", "+922222222222"]
+
 
 
 @pytest.mark.asyncio
