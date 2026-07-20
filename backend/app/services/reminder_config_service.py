@@ -12,12 +12,22 @@ from app.core.enums import (
     DEFAULT_REMINDER_ANCHOR_KEY,
     DEFAULT_REMINDER_STOP_CONDITION,
     ReminderAnchorType,
+    ReminderGenerationMode,
     ReminderOffsetDirection,
 )
 from app.models.reminder_config import ReminderConfig
+from app.models.reminder_instance import ReminderInstance
+from app.services.reminder_payload_delivery import validate_template_key_for_channels
 from app.utils.datetime_utils import normalize_to_utc_naive, utcnow_naive
 from app.utils.recipient_data import normalize_recipient_data
 from app.utils.reminder_config_validation import validate_anchor_fields, validate_scheduling_fields
+from app.utils.reminder_payload_mode import (
+    PayloadReminderValidationError,
+    collect_request_channels,
+    is_payload_config,
+    is_payload_mode_request,
+    validate_recipient_data_for_channels,
+)
 from app.utils.reminder_recurrence_validation import validate_recurrence_fields
 
 
@@ -150,6 +160,7 @@ class ReminderConfigService:
         max_attempts: int | None,
         stop_condition: str,
         stop_condition_config: dict[str, object] | None,
+        generation_mode: str,
         now: datetime,
         synced: list[ReminderConfig],
     ) -> None:
@@ -195,6 +206,7 @@ class ReminderConfigService:
             existing.max_attempts = max_attempts
             existing.stop_condition = stop_condition
             existing.stop_condition_config = stop_condition_config
+            existing.generation_mode = generation_mode
             existing.updated_at = now
             synced.append(existing)
             return
@@ -224,12 +236,56 @@ class ReminderConfigService:
             max_attempts=max_attempts,
             stop_condition=stop_condition,
             stop_condition_config=stop_condition_config,
+            generation_mode=generation_mode,
             is_active=True,
             created_at=now,
             updated_at=now,
         )
         self.session.add(config)
         synced.append(config)
+
+    async def _materialize_payload_instances(
+        self,
+        configs: list[ReminderConfig],
+    ) -> list[ReminderInstance]:
+        """Create reminder_instances for payload-mode configs (no resolver)."""
+        created: list[ReminderInstance] = []
+        for config in configs:
+            if not is_payload_config(config):
+                continue
+            scheduled_at = normalize_to_utc_naive(config.absolute_scheduled_at)
+            if scheduled_at is None:
+                raise PayloadReminderValidationError(
+                    "payload-mode config is missing absolute_scheduled_at"
+                )
+            if config.id is None:
+                await self.session.flush()
+                await self.session.refresh(config)
+
+            duplicate = await self.session.execute(
+                select(ReminderInstance).where(
+                    ReminderInstance.config_id == config.id,
+                    ReminderInstance.entity_id == config.entity_id,
+                    ReminderInstance.scheduled_at == scheduled_at,
+                )
+            )
+            if duplicate.scalar_one_or_none() is not None:
+                continue
+
+            instance = ReminderInstance(
+                config_id=int(config.id),
+                organization_id=int(config.organization_id),
+                entity_type=str(config.entity_type),
+                entity_id=int(config.entity_id),
+                scheduled_at=scheduled_at,
+                status="PENDING",
+            )
+            self.session.add(instance)
+            created.append(instance)
+
+        if created:
+            await self.session.flush()
+        return created
 
     async def save_entity_definitions(
         self,
@@ -268,6 +324,28 @@ class ReminderConfigService:
             if commit:
                 await self.session.commit()
             return []
+
+        payload_mode = is_payload_mode_request(
+            definitions=definitions,
+            template_key=template_key,
+            recipient_data=recipient_data,
+            template_variables=template_variables,
+        )
+        generation_mode = (
+            ReminderGenerationMode.PAYLOAD.value
+            if payload_mode
+            else ReminderGenerationMode.RESOLVER.value
+        )
+        if payload_mode:
+            request_channels = collect_request_channels(definitions)
+            resolved_recipients = normalize_recipient_data(recipient_data)
+            validate_recipient_data_for_channels(resolved_recipients, request_channels)
+            await validate_template_key_for_channels(
+                self.session,
+                organization_id=organization_id,
+                template_key=str(template_key or "").strip(),
+                channels=request_channels,
+            )
 
         now = utcnow_naive()
         synced: list[ReminderConfig] = []
@@ -342,6 +420,7 @@ class ReminderConfigService:
                     max_attempts=max_attempts,
                     stop_condition=stop_condition,
                     stop_condition_config=stop_condition_config,
+                    generation_mode=generation_mode,
                     now=now,
                     synced=synced,
                 )
@@ -363,6 +442,9 @@ class ReminderConfigService:
                 keep_config_ids=synced_ids,
                 commit=False,
             )
+
+        if payload_mode:
+            await self._materialize_payload_instances(synced)
 
         if commit:
             await self.session.commit()

@@ -282,6 +282,8 @@ class ReminderConfigResponse(BaseModel):
         ),
     )
 
+    anchor_type: str = ReminderAnchorType.DATE.value
+    anchor_key: str = DEFAULT_REMINDER_ANCHOR_KEY
     offset_direction: str
     offset_value: int
     offset_unit: str

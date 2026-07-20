@@ -16,8 +16,10 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 from app.core.enums import (
     DEFAULT_REMINDER_ANCHOR_KEY,
+    DEFAULT_REMINDER_GENERATION_MODE,
     DEFAULT_REMINDER_STOP_CONDITION,
     ReminderAnchorType,
+    ReminderGenerationMode,
     ReminderOffsetDirection,
     ReminderStopCondition,
 )
@@ -54,6 +56,11 @@ class ReminderConfig(Base):
             f"'{ReminderStopCondition.END_DATE_REACHED.value}', "
             f"'{ReminderStopCondition.MAX_ATTEMPTS_REACHED.value}')",
             name="ck_reminder_configs_stop_condition",
+        ),
+        CheckConstraint(
+            f"generation_mode IN ('{ReminderGenerationMode.PAYLOAD.value}', "
+            f"'{ReminderGenerationMode.RESOLVER.value}')",
+            name="ck_reminder_configs_generation_mode",
         ),
     )
 
@@ -110,6 +117,12 @@ class ReminderConfig(Base):
 
     time_of_day = Column(Time, nullable=True)
     absolute_scheduled_at = Column(DateTime, nullable=True)
+    generation_mode = Column(
+        String(20),
+        nullable=False,
+        default=DEFAULT_REMINDER_GENERATION_MODE,
+        server_default=DEFAULT_REMINDER_GENERATION_MODE,
+    )
     dnd_start = Column(Time, nullable=True)
     dnd_end = Column(Time, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default=true())

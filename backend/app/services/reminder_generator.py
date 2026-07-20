@@ -26,6 +26,7 @@ from app.utils.reminder_schedule import (
     scheduled_at_for_absolute_config,
     scheduled_at_for_relative_config,
 )
+from app.utils.reminder_payload_mode import is_payload_config
 from app.utils.reminder_recurrence import count_sent_instances, has_pending_instance
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,11 @@ logger = logging.getLogger(__name__)
 # Sentinel used by Generic Reminder Management / Claims settings for org-wide rules.
 # Not a real entity id — generators must fan out to all eligible entities.
 ORG_LEVEL_ENTITY_ID = 0
+
+
+def _resolver_mode_configs(configs: list[ReminderConfig]) -> list[ReminderConfig]:
+    """Exclude payload-mode configs — they already have materialized instances."""
+    return [config for config in configs if not is_payload_config(config)]
 
 
 class ReminderGeneratorService:
@@ -174,15 +180,6 @@ class ReminderGeneratorService:
 
         created: list[ReminderInstance] = []
         entity_id = int(entity.entity_id)
-        logger.warning(
-            "[ReminderGenerator][TEMP] creating instances org=%s type=%s entity_id=%s "
-            "config_ids=%s is_active=%s",
-            org_id,
-            entity_type,
-            entity_id,
-            [int(c.id) for c in configs],
-            [bool(c.is_active) for c in configs],
-        )
         for config in configs:
             anchor = self._resolve_config_anchor(
                 resolver=resolver,
@@ -252,7 +249,7 @@ class ReminderGeneratorService:
                 ),
             )
         )
-        configs = list(config_result.scalars())
+        configs = _resolver_mode_configs(list(config_result.scalars()))
         created: list[ReminderInstance] = []
 
         for config in configs:
@@ -294,27 +291,9 @@ class ReminderGeneratorService:
         if organization_id is not None:
             query = query.where(ReminderConfig.organization_id == organization_id)
 
-        configs = list((await self.session.execute(query)).scalars())
+        configs = _resolver_mode_configs(list((await self.session.execute(query)).scalars()))
         if not configs:
             return []
-
-        # TEMP debug: trace which active configs the generator snapshot includes.
-        logger.warning(
-            "[ReminderGenerator][TEMP] generate_from_active_configs loaded %s config(s) "
-            "organization_id=%s: %s",
-            len(configs),
-            organization_id,
-            [
-                {
-                    "config_id": int(c.id),
-                    "entity_id": int(c.entity_id),
-                    "entity_type": c.entity_type,
-                    "channel": c.channel,
-                    "is_active": bool(c.is_active),
-                }
-                for c in configs
-            ],
-        )
 
         grouped: dict[tuple[int, str], list[ReminderConfig]] = defaultdict(list)
         for config in configs:
@@ -340,18 +319,6 @@ class ReminderGeneratorService:
             entity_specific_configs = [
                 c for c in type_configs if int(c.entity_id) != ORG_LEVEL_ENTITY_ID
             ]
-
-            logger.warning(
-                "[ReminderGenerator][TEMP] org=%s entity_type=%s "
-                "org_level_config_ids=%s entity_specific=%s",
-                org_id,
-                entity_type,
-                [int(c.id) for c in org_level_configs],
-                [
-                    {"config_id": int(c.id), "entity_id": int(c.entity_id)}
-                    for c in entity_specific_configs
-                ],
-            )
 
             entities_by_id: dict[int, ReminderEntitySnapshot] = {}
             for entity in await resolver.list_entities(self.session, org_id):

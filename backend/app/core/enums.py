@@ -43,4 +43,20 @@ class ReminderStopCondition(str, Enum):
 
 DEFAULT_REMINDER_STOP_CONDITION = ReminderStopCondition.ENTITY_INELIGIBLE.value
 
+
+class ReminderGenerationMode(str, Enum):
+    """How reminder_instances are created for a config.
+
+    - PAYLOAD: caller supplies schedule + recipients + template data; instances are
+      materialized when the config is saved (no module resolver).
+    - RESOLVER: engine discovers entities and anchors via ReminderEntityResolver
+      (Insurance relative reminders, org-level rules, etc.).
+    """
+
+    PAYLOAD = "payload"
+    RESOLVER = "resolver"
+
+
+DEFAULT_REMINDER_GENERATION_MODE = ReminderGenerationMode.RESOLVER.value
+
 REMINDER_OFFSET_UNITS = frozenset({"hours", "days", "weeks", "months"})
