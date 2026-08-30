@@ -1,15 +1,6 @@
 name: Database Migrations
 
 on:
-  pull_request:
-    branches: [main, dev]
-    paths:
-      - "database/migrations/**"
-      - ".github/workflows/database-migrations.yml"
-  push:
-    branches: [main, dev]
-    paths:
-      - "database/migrations/**"
   workflow_dispatch:
     inputs:
       environment:
